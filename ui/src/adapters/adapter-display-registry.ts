@@ -101,6 +101,11 @@ const adapterDisplayMap: Record<string, AdapterDisplayInfo> = {
     description: "Kimi Code CLI harness",
     icon: Moon,
   },
+  muse_local: {
+    label: "Muse",
+    description: "Muse CLI harness",
+    icon: Bot,
+  },
   hermes_gateway: {
     label: "Hermes Gateway",
     description: "Remote Hermes API server",
