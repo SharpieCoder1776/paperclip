@@ -393,3 +393,13 @@ are available. The assignment catalog is read on each new assignment.
 The [2026-10-08 cloud Runner and invitation decision](plans/2026-10-08-cloud-dot-runner-and-external-invitations.md) keeps remote agents on the new Runner infrastructure. In addition to shared assignment lifecycle handling, this preserves a sandbox boundary for future tools that may access Paperclip workspaces. The first cloud version gives Dot no Paperclip workspace file or command tools; Dot works on its own computer.
 
 The proposed entry is **Invite an external agent → Dot / Hermes / Other**. Dot receives a copyable setup prompt and watched connection checks, with readiness requiring a confirmed event round trip. The Storybook journeys demonstrate this flow with fixtures; they do not change the current self-hosted setup or establish cloud support. Hermes continues to use the existing external-agent invitation prompt.
+
+## Agent avatar
+
+After pairing, Dot can call `paperclip_dot_set_avatar` without an active assignment or completed event test. It changes only the Paperclip agent bound to that live connection. It requires the Dot and Assistant connections experimental flags, an active operator membership, and a non-revoked grant and binding.
+
+Input is `{ "imageBase64": "<raw base64 image bytes>" }`. PNG, JPEG and WebP are supported, up to 512 KiB and 16 megapixels; animations and SVG are rejected. Paperclip re-encodes the image as a metadata-free PNG at most 512 pixels on either side. Sending the same image again is safe and does not create another asset. Send `{ "imageBase64": null }` to restore the existing Paperclip character and palette.
+
+The same capability is available to agents via `PUT /api/companies/:companyId/agents/:agentId/avatar` with the same body and normal agent bearer authentication. An agent can update only itself; company operators can update their agents. Returned `appearance.customAvatarAssetId` and `avatarUrl` propagate through existing agent views. The image is a company-scoped private asset served through authenticated `/api/assets/:assetId/content`, not a public image URL for third-party embeds. Previous assets remain available for configuration history. Activity records contain asset metadata, never image bytes.
+
+The setup prompt asks Dot to upload its own current image only if it can obtain it. We have not verified a supported OpenAI avatar-export API. Avatar availability must never block pairing; Dot may call the tool later. This capability does not add workspace access or change Runner assignment execution.

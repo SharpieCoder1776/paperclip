@@ -56,3 +56,34 @@ export const RetryAndConnect: Story = {
     await waitFor(() => expect(page.getByRole("heading", { name: "Your Dot is connected" })).toBeVisible());
   },
 };
+
+export const AnimatedResize: Story = {
+  name: "Test · Modal expands and contracts smoothly",
+  args: { initialScreen: "picker", simulate: false },
+  play: async ({ canvasElement }) => {
+    const page = within(canvasElement.ownerDocument.body);
+    const win = canvasElement.ownerDocument.defaultView!;
+    const dialog = await page.findByRole("dialog", { name: "Invite an external agent" });
+    const sampleChange = async (button: HTMLElement) => {
+      const before = dialog.getBoundingClientRect().height;
+      const samples: number[] = [];
+      let frame: number;
+      const sample = () => { samples.push(dialog.getBoundingClientRect().height); frame = win.requestAnimationFrame(sample); };
+      frame = win.requestAnimationFrame(sample);
+      try {
+        await userEvent.click(button);
+        await new Promise(resolve => win.setTimeout(resolve, 600));
+      } finally { win.cancelAnimationFrame(frame); }
+      const after = dialog.getBoundingClientRect().height;
+      await expect(Math.abs(after - before)).toBeGreaterThan(30);
+      if (!win.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+        const intermediates = samples.filter(height => height > Math.min(before, after) + 1 && height < Math.max(before, after) - 1);
+        await expect(new Set(intermediates.map(height => Math.round(height))).size).toBeGreaterThan(1);
+      }
+    };
+    // Let initial portal measurement settle before changing its content.
+    await new Promise(resolve => win.requestAnimationFrame(() => win.requestAnimationFrame(resolve)));
+    await sampleChange(page.getByRole("button", { name: "Dot Your Dot in ChatGPT" }));
+    await sampleChange(page.getByRole("button", { name: "Back" }));
+  },
+};

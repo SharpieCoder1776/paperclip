@@ -1,6 +1,9 @@
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { z } from "zod";
+import { setAgentAvatarSchema, type SetAgentAvatarInput } from "@paperclipai/shared";
+import { setAgentProfileAvatar } from "./agent-profile-avatar.js";
+import { getStorageService } from "../storage/index.js";
 import { agents, companies, heartbeatRuns, issues, agentWakeupRequests, nativeRunFinalizations, mcpOauthGrants,
   mcpEventSubscriptions, dotAgentBindings as bindings, dotRunnerAssignments as assignments,
   dotRunnerOperations as operations, dotMailboxItems as mailbox, type Db } from "@paperclipai/db";
@@ -228,6 +231,12 @@ function createBroker(db: Db) {
       return db.select({ id: issues.id, identifier: issues.identifier, title: issues.title, status: issues.status }).from(issues)
         .where(and(eq(issues.companyId, b.companyId), eq(issues.assigneeAgentId, b.agentId), inArray(issues.status, ["todo", "in_progress", "blocked"]), after ? gt(issues.id, after) : undefined)).orderBy(asc(issues.id)).limit(50);
     },
+    async setAvatar(principal: McpPrincipal, input: SetAgentAvatarInput) {
+      if (!await enabled()) throw fail("Dot is disabled in experimental settings.");
+      const b = await principalBinding(principal, false);
+      return setAgentProfileAvatar(db, getStorageService(), b.companyId, b.agentId, input,
+        { actorType: "agent", actorId: b.agentId, agentId: b.agentId });
+    },
     async capabilities(principal: McpPrincipal) {
       const b = await principalBinding(principal, false);
       const [agent] = await db.select().from(agents).where(eq(agents.id, b.agentId));
@@ -238,6 +247,7 @@ function createBroker(db: Db) {
         permissions: agent!.permissions, ready: state?.status === "ready" && state.subscriptionVerified,
         assignment: state?.assignment ?? null,
         idle: { read: ["paperclip_dot_capabilities", "paperclip_dot_tasks", "paperclip_dot_inbox"],
+          profile: "paperclip_dot_set_avatar",
           start: "paperclip_dot_request_turn", instruction: "You can start work without an existing task. Call paperclip_dot_request_turn with the user's request and a stable UUID. Drain the inbox, read and accept the assignment, then use its full catalog through paperclip_dot_tool. Task tools run as this agent under normal permissions, never as the owner." },
         runtime: { skills: "pinned_read", mcp: "assigned_gateway", taskAttachments: agent!.adapterConfig?.dotAttachmentAccess === true ? "assigned_task_read" : "disabled",
           attachmentPrerequisite: "Enable task attachment reading on this Dot agent to send verified contents of its current assigned task files to OpenAI. This does not enable workspace commands.", workspace: agent!.adapterConfig?.dotWorkspaceAccess === true ? "sandboxed_tool_bridge" : "disabled",
@@ -499,6 +509,7 @@ export function createDotRunnerMcpTools(db: Db): PublicMcpToolExtension {
   const broker = dotRunnerBroker(db);
   const request = { assignmentId: z.uuid(), requestId: z.uuid() };
   const definitions = [
+    { name: "paperclip_dot_set_avatar", description: "Update only your bound Paperclip agent's avatar, including while idle after pairing. If you can obtain your own avatar, send its PNG/JPEG/WebP bytes as raw base64 (max 512 KiB, static image). Do not send a URL or invent an image. Use imageBase64: null to restore the Paperclip character. Repeating the same image is safe. No active assignment is needed.", schema: setAgentAvatarSchema },
     { name: "paperclip_dot_capabilities", description: "Discover your agent identity, responsible person, configured permissions, enforcement limits, idle entry point, runtime capabilities, and prerequisites. Use this before concluding you cannot act.", schema: z.object({}).strict() },
     { name: "paperclip_dot_request_turn", description: "Start a governed Runner turn for a request from your Dot conversation, even when no task is assigned. Creates one auditable intake task using normal permissions and admission. Retry the exact prompt with the same UUID.", schema: z.object({ prompt: z.string().trim().min(1).max(20_000), requestId: z.uuid() }).strict() },
     { name: "paperclip_dot_renew", description: "Renew an accepted assignment before expiry. Choose an expiry no more than two hours ahead or 24 hours after admission. Cannot revive expired, stopped, or revoked work.", schema: z.object({ ...request, expiresAtUnixMs: z.number().int().positive() }).strict() },
@@ -523,7 +534,8 @@ export function createDotRunnerMcpTools(db: Db): PublicMcpToolExtension {
       const definition = definitions.find(d => d.name === name); if (!definition) throw fail("Unknown Dot tool.");
       const input = definition.schema.parse(raw) as Record<string, unknown>;
       let result: unknown;
-      if (name === "paperclip_dot_capabilities") result = await broker.capabilities(principal);
+      if (name === "paperclip_dot_set_avatar") result = await broker.setAvatar(principal, setAgentAvatarSchema.parse(input));
+      else if (name === "paperclip_dot_capabilities") result = await broker.capabilities(principal);
       else if (name === "paperclip_dot_request_turn") result = await broker.requestTurn(principal, String(input.prompt), String(input.requestId));
       else if (name === "paperclip_dot_tasks") result = await broker.tasks(principal, input.after ? String(input.after) : null);
       else if (name === "paperclip_dot_request_work") result = await broker.requestWork(principal, String(input.issueId), String(input.requestId));

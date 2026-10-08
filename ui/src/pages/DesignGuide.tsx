@@ -1,3 +1,5 @@
+import { AnimatedDialogContent } from "@/components/AnimatedDialogContent";
+import { ExternalAgentPresetPicker, DotConnectionChecks } from "@/components/new-agent/ExternalAgentInviteContent";
 import { AgentMailApiKeyField } from "@/features/connections/AgentMailApiKeyField";
 import { TaskBrowserFooter } from "@/components/task-side-panel/TaskBrowserFooter";
 import { TaskBrowserActivity } from "@/components/task-side-panel/TaskBrowserActivity";
@@ -2300,6 +2302,15 @@ export function DesignGuide() {
         <SavedProviderKeySelect options={[{ id: "example", label: "Claude API key (Your key)", binding: { type: "user_secret_ref", key: "ANTHROPIC_API_KEY", version: "latest" } }]} value="example" onChange={() => {}} loading={false} error={false} />
         <SavedProviderKeySelect options={[]} value="" onChange={() => {}} loading error={false} />
         <SavedProviderKeySelect options={[]} value="" onChange={() => {}} loading={false} error />
+      </Section>
+
+      <Section title="External agent invitation">
+        <p className="text-sm text-muted-foreground">Match the harness picker with provider cards. Connection checks reflect confirmed server evidence. AnimatedDialogContent resizes to its content using motion tokens and respects reduced motion.</p>
+        <ExternalAgentPresetPicker onSelect={() => {}} />
+        <DotConnectionChecks state={{ phase: "testing" }} />
+        <Dialog><DialogTrigger asChild><Button variant="outline">Preview invitation modal</Button></DialogTrigger>
+          <AnimatedDialogContent><div className="space-y-4 p-6"><DialogTitle>Invite an external agent</DialogTitle><DialogDescription>Choose an agent you already use.</DialogDescription><ExternalAgentPresetPicker onSelect={() => {}} /></div></AnimatedDialogContent>
+        </Dialog>
       </Section>
 
       <Section title="Browser setup prompt">

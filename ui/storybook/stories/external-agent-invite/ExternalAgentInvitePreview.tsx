@@ -5,7 +5,8 @@ import { Agents } from "@/pages/Agents";
 import { PluginLauncherProvider } from "@/plugins/launchers";
 import { AgentBasicsDialog } from "@/components/new-agent/AgentBasicsDialog";
 import { ExternalAgentInviteContent, type DotConnectionState, type ExternalAgentPreset } from "@/components/new-agent/ExternalAgentInviteContent";
-import { Dialog, DialogContent } from "@/components/ui/dialog";
+import { Dialog } from "@/components/ui/dialog";
+import { AnimatedDialogContent } from "@/components/AnimatedDialogContent";
 import { Button } from "@/components/ui/button";
 import { dotInvitePrompt, externalInvitePrompt } from "./fixtures";
 
@@ -47,7 +48,7 @@ export function ExternalAgentInvitePreview({
     </PluginLauncherProvider> : <div className="p-6"><Button onClick={() => setScreen("picker")}>Invite an external agent</Button></div>}
     <AgentBasicsDialog open={screen === "entry"} onClose={() => setScreen("closed")} onContinue={() => setScreen("closed")} onInvite={() => setScreen("picker")} />
     <Dialog open={screen === "picker" || screen === "setup"} onOpenChange={open => { if (!open) setScreen("closed"); }}>
-      <DialogContent className="flex max-h-(--sz-calc-18) flex-col gap-0 overflow-hidden p-0 sm:max-w-(--sz-560px)">
+      <AnimatedDialogContent className="flex max-h-(--sz-calc-18) flex-col gap-0 overflow-hidden p-0 sm:max-w-(--sz-560px)">
         <ExternalAgentInviteContent
           preset={screen === "picker" ? null : preset}
           companyName={companyName}
@@ -60,7 +61,7 @@ export function ExternalAgentInvitePreview({
           onRetry={() => { setConnection(previous => ({ phase: previous.phase })); setRetrying(true); setWatching(true); }}
           onNewPrompt={() => { setGeneration(value => value + 1); setConnection({ phase: "waiting" }); setWatching(false); }}
         />
-      </DialogContent>
+      </AnimatedDialogContent>
     </Dialog>
   </>;
 }

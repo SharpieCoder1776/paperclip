@@ -1,4 +1,4 @@
-import { ArrowLeft, Check, ChevronRight, Circle, CircleAlert, Loader2 } from "lucide-react";
+import { ArrowLeft, Check, Circle, CircleAlert, Loader2 } from "lucide-react";
 import { AdapterMark } from "../AdapterMark";
 import { AgentSetupPrompt } from "../AgentSetupPrompt";
 import { Button } from "../ui/button";
@@ -18,19 +18,16 @@ const presets = [
 ] as const;
 
 export function ExternalAgentPresetPicker({ onSelect }: { onSelect: (preset: ExternalAgentPreset) => void }) {
-  return <div className="flex flex-col gap-2">
+  return <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
     {presets.map(preset => <button
       key={preset.id}
       type="button"
       onClick={() => onSelect(preset.id)}
-      className="flex items-center gap-4 rounded-lg border p-4 text-left transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="flex aspect-square flex-col items-center justify-center gap-3 rounded-lg border border-border bg-card px-3 py-4 text-center transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <AdapterMark type={preset.adapter} className="size-8" />
-      <span className="min-w-0 flex-1">
-        <span className="block text-sm font-medium">{preset.name}</span>
-        <span className="mt-1 block text-sm text-muted-foreground">{preset.description}</span>
-      </span>
-      <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
+      <span className="text-sm font-medium">{preset.name}</span>
+      <span className="sr-only">{preset.description}</span>
     </button>)}
   </div>;
 }

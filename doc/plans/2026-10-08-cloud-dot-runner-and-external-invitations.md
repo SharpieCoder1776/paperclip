@@ -39,7 +39,7 @@ This preserves one lifecycle without promising that every provider performs iden
 
 Entry: **New agent → Invite an external agent → Dot / Hermes / Other**.
 
-The picker uses the Dot and Hermes brand marks. The Dot option is governed by the standalone Dot experimental setting and its required Assistant connections (MCP) dependency in the eventual live controller. Experimental infrastructure prerequisites belong in settings, not as a list of implementation details in this invitation.
+The picker uses square cards matching the harness picker, with the Dot and Hermes brand marks. The shared dialog animates content-height changes without scaling text and respects reduced-motion preferences. The Dot option is governed by the standalone Dot experimental setting and its required Assistant connections (MCP) dependency in the eventual live controller. Experimental infrastructure prerequisites belong in settings, not as a list of implementation details in this invitation.
 
 1. Choose **Dot**. Paperclip creates a company/agent-scoped invitation and a short-lived pairing prompt.
 2. Show **Copy setup prompt**, using the shared `AgentSetupPrompt` component with the Dot mark. Tell the user to send the whole prompt to their Dot in ChatGPT. The preview remains inspectable and offers selectable text if clipboard access fails.
@@ -66,9 +66,9 @@ Folder: `ui/storybook/stories/external-agent-invite/`.
 
 - **Onboarding / External agent invitation / Journeys**: entry, picker, copy handoff, individual watched states, success, timeout/retry, expiration, interrupted updates, Hermes, Other, mobile, light theme, and long company names.
 - **Onboarding / External agent invitation / Components**: picker and each controlled connection-check state.
-- Interaction stories exercise copy → watched progression → success and retry without discarding completed checks.
+- Interaction stories exercise copy → watched progression → success, retry without discarding completed checks, and measured intermediate heights while the modal expands and contracts.
 
-The shared presentation lives in `ui/src/components/new-agent/ExternalAgentInviteContent.tsx`. Storybook alone supplies timers and fixture credentials at `.example` URLs. It reuses the live Dot prompt with a documented fixture-only substitution for automatic readiness testing; the live runtime prompt remains unchanged. Hermes and Other reuse the production invitation builder without modifications.
+The shared presentation lives in `ui/src/components/new-agent/ExternalAgentInviteContent.tsx`. Storybook alone supplies timers and fixture credentials at `.example` URLs. It reuses the live Dot prompt with a documented fixture-only substitution for automatic readiness testing; the live runtime prompt still requires its manual readiness test. Both prompts now optionally ask Dot to upload its own avatar using `paperclip_dot_set_avatar`; avatar availability does not block pairing. Hermes and Other reuse the production invitation builder without modifications.
 
 Run `pnpm --filter @paperclipai/ui storybook`, then open the journey group. Copying in the interactive Dot story advances simulated checks; the fixed-state stories remain still for inspection. These stories demonstrate the proposed UX, not a successful live cloud pairing.
 

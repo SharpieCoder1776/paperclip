@@ -20,6 +20,8 @@ Entering this code on the OAuth connection page completes agent pairing. Then us
 
 This one-use code expires at ${expiresAt}. If it has expired, ask me for a fresh setup prompt.
 
+If you can obtain your own current avatar image, call paperclip_dot_set_avatar with its raw base64 PNG/JPEG/WebP bytes (at most 512 KiB) to use it as your Paperclip avatar. Do not invent an avatar or block connection setup if the image is unavailable; you can set it later.
+
 Subscribe through MCP Events to paperclip.dot.mailbox_updated using Paperclip company ${companyId} and the binding ID returned by the inbox. Complete callback verification and follow the returned eventInstructions.
 
 Whenever an event arrives, drain paperclip_dot_inbox after your last cursor. Confirm readiness_challenge items with paperclip_dot_confirm_event. Read and accept assignments, then work through their provided tool catalog and follow the returned completion instructions.
