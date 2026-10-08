@@ -201,8 +201,8 @@ acknowledgement fails, the worker conservatively keeps recovery checks active
 until the process restarts. Neither an empty read nor delivery of an unrelated
 record can prove that an ambiguous commit will not appear later. An autocommit receipt
 write that fails uses the same conservative recovery mode. This exceptional
-path can keep an otherwise empty queue awake; it deliberately favors delivery
-recovery. Normal successful transactions have no empty-queue backstop.
+path also holds idle admission, so an empty durable scan cannot authorize sleep
+while the commit outcome is unknown. It deliberately favors delivery recovery. Normal successful transactions have no empty-queue backstop.
 
 The supported writer boundary is one server process using its `createDb`
 instance and the instrumented service mutations. Startup recovers durable rows

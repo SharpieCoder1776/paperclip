@@ -46,12 +46,16 @@ describe("delivery queue workers", () => {
     const s = setup();
     await s.worker.ready;
     signalDatabaseWork(s.db, s.topic, true);
+    expect(idleWorkSnapshot().active).toBe(1);
     await vi.advanceTimersByTimeAsync(3000);
     expect(s.run.mock.calls.length).toBeGreaterThan(3);
     expect(vi.getTimerCount()).toBe(1);
     s.hasPending.mockResolvedValueOnce(true);
     await vi.advanceTimersByTimeAsync(2000);
     expect(vi.getTimerCount()).toBe(1);
+    expect(idleWorkSnapshot().active).toBe(1);
+    await s.worker.stop();
+    expect(idleWorkSnapshot().active).toBe(0);
   });
 
   it("does not lose a commit racing the final empty check or overlap deliveries", async () => {

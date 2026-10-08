@@ -26,6 +26,7 @@ export function createDeliveryQueueWorker(input: {
   let stopped = false;
   let dirty = false;
   let uncertainCommit = false;
+  let finishUncertainCommit: (() => void) | null = null;
   let running: Promise<void> | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
 
@@ -67,7 +68,10 @@ export function createDeliveryQueueWorker(input: {
     // A lost COMMIT acknowledgement can precede visibility on another
     // connection. Even observing other pending work cannot resolve that
     // ambiguity. Retain a conservative recovery backstop until restart.
-    uncertainCommit ||= uncertain;
+    if (uncertain && !uncertainCommit) {
+      uncertainCommit = true;
+      finishUncertainCommit = beginIdleTrackedWork();
+    }
     dirty = true;
     if (!running) arm(0);
   }
@@ -83,6 +87,8 @@ export function createDeliveryQueueWorker(input: {
       if (timer) clearTimeout(timer);
       timer = null;
       await running;
+      finishUncertainCommit?.();
+      finishUncertainCommit = null;
     },
   };
 }
