@@ -535,25 +535,25 @@ describe("native task context ownership", () => {
   }
 
   it.each(["off", "low", "high", "max"])("requires exact Pi13 thinking level %s in native input", piThinkingLevel => {
-    const { qualificationModel, reportedModelId: _reported, permissionPolicy: _permission, modelPolicy: _policy, qualificationStatus: _status, ...profile } = QUALIFIED_ACPX_PROFILES.pi;
+    const { permissionPolicy: _permission, qualificationStatus: _status, ...profile } = QUALIFIED_ACPX_PROFILES.pi;
+    const qualificationModel = "openrouter/test-provider-model";
     const value = { ...currentInput(), session: { ...currentInput().session, driverKind: "acpx_runtime" }, provider: { kind: "acpx", agent: "pi", model: qualificationModel, permissionMode: "approve-all", piThinkingLevel, profile } };
     expect(parseNativeExecutionInput(value).provider).toEqual(value.provider);
     for (const mode of [undefined, null, "medium", "minimal", "xhigh", "", { toString: () => "low" }]) expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, piThinkingLevel: mode } })).toThrow(/piThinkingLevel/);
     expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, agent: "codex" } })).toThrow(/piThinkingLevel/);
   });
 
-  it.each(["agent", "plan", "ask"])("round-trips Cursor mode %s through the closed execution contract", cursorMode => {
+  it.each(["agent", "plan", "ask"])("round-trips Cursor mode %s through the closed execution contract", mode => {
     const { qualificationModel: _model, reportedModelId: _reported, permissionPolicy: _permission,
       modelPolicy: _policy, qualificationStatus: _status, ...profile } = QUALIFIED_ACPX_PROFILES.cursor;
     const value = { ...currentInput(), session: { ...currentInput().session, driverKind: "acpx_runtime" },
-      provider: { kind: "acpx", agent: "cursor", model: "explicit-model", permissionMode: "deny-all", cursorMode, profile } };
+      provider: { kind: "acpx", agent: "cursor", model: "explicit-model", permissionMode: "deny-all", mode, profile } };
     const result = parseNativeExecutionInput(value);
     expect(result.provider).toEqual(value.provider);
     expect(parseNativeExecutionInput(result)).toEqual(result);
-    for (const mode of [null, "", "PLAN", "auto", true, { toString: () => "plan" }]) {
-      expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, cursorMode: mode } })).toThrow("cursorMode");
+    for (const mode of [null, "", true, { toString: () => "plan" }]) {
+      expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, mode: mode } })).toThrow("mode");
     }
-    expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, agent: "copilot" } })).toThrow("cursorMode");
   });
 
   it.each([

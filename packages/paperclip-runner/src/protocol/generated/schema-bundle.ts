@@ -1168,14 +1168,6 @@ export const providerDescriptorSchema = {
       ],
       "maxLength": 240
     },
-    "piThinkingLevel": {
-      "enum": [
-        "off",
-        "low",
-        "high",
-        "max"
-      ]
-    },
     "turnControls": {
       "$ref": "#/$defs/turnControls"
     }

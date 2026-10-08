@@ -602,7 +602,7 @@ describe("Cursor mode native execution projection", () => {
   }
   it.each([undefined, "agent", "plan", "ask"] as const)("preserves mode %s independently of permissions and task planning", mode => {
     const result = buildNativeExecutionInput(fixture(mode));
-    expect(result.provider).toMatchObject({ kind: "acpx", agent: "cursor", cursorMode: mode ?? "agent", permissionMode: "deny-all" });
+    expect(result.provider).toMatchObject({ kind: "acpx", agent: "cursor", mode: mode ?? "agent", permissionMode: "deny-all" });
     expect(result.executionMode).toBe("default");
     expect(result.task.workMode).toBe("standard");
   });

@@ -114,6 +114,7 @@ export function buildNativeExecutionInput(input: BuildNativeExecutionInput): Nat
     throw new Error("native_execution_input_invalid: issue work mode must be standard, planning, or ask");
   }
   const mode = resolvePaperclipRunnerCursorMode(input.provider, input.acpxAgent, input.acpxSessionMode);
+  const piThinkingLevel = resolvePaperclipRunnerPiThinkingLevel(input.provider, input.acpxAgent, input.piThinkingLevel);
   const executionMode = input.executionMode
     ?? (input.issue.workMode === "planning" ? "plan" : "default");
   const acpxProfile = input.provider === "acpx"
@@ -277,6 +278,7 @@ export function buildNativeExecutionInput(input: BuildNativeExecutionInput): Nat
           model: input.model,
           permissionMode: input.acpxPermissionMode ?? "approve-all",
           ...(mode === undefined ? {} : { mode }),
+          ...(piThinkingLevel === undefined ? {} : { piThinkingLevel }),
           profile: {
             driverKind: acpxProfile!.driverKind,
             protocolVersion: acpxProfile!.protocolVersion,

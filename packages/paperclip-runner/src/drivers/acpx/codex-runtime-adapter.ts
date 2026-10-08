@@ -302,6 +302,10 @@ export async function openQualifiedAcpxRuntime(
     );
   };
   const commandLaunches = { count: 0, refreshConsumedCommand: options.refreshConsumedCommand };
+  const selectedPiThinkingLevel = resolvePiThinkingLevel(options.profile.agent, options.piThinkingLevel);
+  const piThinking = selectedPiThinkingLevel
+    ? createPiThinkingAdmission(selectedPiThinkingLevel, { restoring: options.restoringSession })
+    : null;
   const modeBinding = createAcpxModeBinding(options.profile.agent, options.mode);
   const cursorInstructions = options.profile.agent === "cursor"
     ? createCursorInstructionAdmission(options.systemInstructions)
@@ -594,7 +598,7 @@ export async function openQualifiedAcpxRuntime(
     return runtimePort(
       runtime,
       handle,
-      { ...requireIdentity(handle), ...(modeBinding ? { mode: modeBinding.selectedMode } : {}) },
+      { ...requireIdentity(handle), ...(modeBinding ? { mode: modeBinding.selectedMode } : {}), ...(selectedPiThinkingLevel ? { piThinkingLevel: selectedPiThinkingLevel } : {}) },
       baseStore,
       children,
       runtimeCloseTimeoutMs,

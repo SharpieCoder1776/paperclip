@@ -81,6 +81,7 @@ const ACPX_ADMISSION_CLEANUP_RESCHEDULE_MS = 1_000;
 
 export interface AcpxRuntimePortIdentity {
   mode?: string;
+  piThinkingLevel?: "off" | "low" | "high" | "max";
   acpxRecordId: string;
   backendSessionId: string;
   agentSessionId: string;
@@ -160,6 +161,7 @@ export interface AcpxRuntimePortOpenOptions {
   providerSessionKey: string;
   permissionMode: NativeAcpxPermissionMode;
   mode?: string;
+  piThinkingLevel?: "off" | "low" | "high" | "max";
   permissionPolicy: ReturnType<typeof acpxRuntimePermissionPolicy>;
   launchEnvironment: Readonly<NodeJS.ProcessEnv>;
   /** Kernel credential-home quorum inherited by the provider sentinel. */
@@ -234,6 +236,7 @@ export interface OpenAcpxRuntimeHostOptions {
   model: string;
   permissionMode: NativeAcpxPermissionMode;
   mode?: string;
+  piThinkingLevel?: "off" | "low" | "high" | "max";
   systemInstructions?: string;
   runtimeContext?: NativeRuntimeContextSnapshot | null;
   environment?: NodeJS.ProcessEnv;
@@ -344,6 +347,7 @@ export class AcpxRuntimeHost {
           requestedModel: options.model,
           permissionMode: options.permissionMode,
           mode: resolveAcpxProviderMode(options.agent, options.mode),
+          piThinkingLevel: resolvePiThinkingLevel(options.agent, options.piThinkingLevel),
           ...(["cursor", "copilot", "pi"].includes(options.agent) && options.providerPolicy !== undefined
             ? { providerPolicy: options.providerPolicy } : {}),
         }),
@@ -565,6 +569,7 @@ export class AcpxRuntimeHost {
             restoringSession: options.expectedIdentity !== undefined,
             permissionMode: binding.permissionMode,
             mode: binding.mode,
+            piThinkingLevel: binding.piThinkingLevel,
             permissionPolicy: acpxRuntimePermissionPolicy(
               binding.permissionMode,
             ),
@@ -622,6 +627,7 @@ export class AcpxRuntimeHost {
           ),
         dependencies.retainAdmissionCleanup,
       );
+      if (runtimeIdentity.piThinkingLevel !== binding.piThinkingLevel) throw new Error("ACPX runtime Pi thinking level conflicts with session binding");
       if (runtimeIdentity.mode !== binding.mode) {
         throw new Error("ACPX runtime Provider mode does not match the admitted session configuration");
       }

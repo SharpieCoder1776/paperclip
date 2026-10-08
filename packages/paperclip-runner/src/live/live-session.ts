@@ -1,5 +1,6 @@
 import { normalizeProviderNotice } from "../drivers/provider-notices.js";
 import { liveRunResultFeedback } from "./run-result-feedback.js";
+import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
