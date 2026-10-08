@@ -43,29 +43,65 @@ describe("Codex ACPX runtime adapter", () => {
     const turn = port.startTurn({ text: "Work", requestId: "turn-1", onExtensionRequest: request, onExtensionNotification: notification });
     const identity = { version: 1, sessionId: "backend-1", turnToken: "00000000-0000-0000-0000-000000000001" };
     created.onExtensionNotification!("_hermes/turn_started", identity);
+    const wireUsage = (params: Record<string, unknown>) => created.onAcpMessage?.("inbound", { jsonrpc: "2.0", method: "_hermes/usage", params });
     await turn.cancel();
     created.onExtensionNotification!("_hermes/delegation", identity);
     await expect(created.onExtensionRequest!("_hermes/ask_questions", identity,
       { requestId: 0, signal: new AbortController().signal })).rejects.toThrow("admitted active turn");
     for (const foreign of [{ ...identity, sessionId: "foreign" }, { ...identity, sessionId: "agent-1" }, { ...identity, turnToken: "00000000-0000-0000-0000-000000000002" }]) {
-      expect(() => created.onExtensionNotification!("_hermes/usage", foreign)).not.toThrow();
+      expect(() => wireUsage(foreign)).not.toThrow();
     }
     expect(notification).not.toHaveBeenCalled();
     const receipt = { ...identity, tokens: "reported", cost: "unavailable", billing: {
       schema: "paperclip.usage.billing/v1", source: "provider_reported", biller: "openrouter", currency: "USD",
       complete: true, requestCount: 1, reportedRequestCount: 1, amountUsd: 0.0042, amountUsdExact: "0.004200000",
     } };
-    created.onExtensionNotification!("_hermes/usage", receipt);
+    const wire = { jsonrpc: "2.0", method: "_hermes/usage", params: receipt };
+    created.onAcpMessage?.("outbound", wire);
+    for (const invalid of [{ ...wire, id: 0 }, { ...wire, id: undefined }, { ...wire, jsonrpc: "1.0" },
+      { ...wire, method: "_hermes/delegation" }, { ...wire, params: null }, { ...wire, params: [] }]) {
+      created.onAcpMessage?.("inbound", invalid);
+    }
+    expect(notification).not.toHaveBeenCalled();
+    wireUsage(receipt);
     expect(notification).toHaveBeenCalledExactlyOnceWith("_hermes/usage", receipt);
+    // ACPX's ordinary extension callback must not deliver the same wire
+    // notification twice if its cancellation gate has not closed yet.
+    created.onExtensionNotification!("_hermes/usage", receipt);
+    expect(notification).toHaveBeenCalledTimes(1);
     expect(request).not.toHaveBeenCalled();
     await turn.closeStream();
     await turn.cancel();
-    created.onExtensionNotification!("_hermes/usage", receipt);
+    wireUsage(receipt);
     expect(notification).toHaveBeenCalledTimes(1);
     pending.settle(); await turn.result;
-    created.onExtensionNotification!("_hermes/usage", receipt);
+    wireUsage(receipt);
     expect(notification).toHaveBeenCalledTimes(1);
     await port.close({ reason: "terminal billing boundary verified" });
+  });
+
+  it("delivers active Hermes usage once through the same wire path and seals it at prompt settlement", async () => {
+    const pending = pendingExtensionTurn("turn-1");
+    const runtime = fakeRuntime(); vi.mocked(runtime.startTurn).mockReturnValue(pending.turn);
+    let created!: AcpRuntimeOptions;
+    const options = openOptions(fakeCommand()); options.profile = { ...options.profile, agent: "hermes" };
+    const port = await openCodexAcpxRuntime(options, {
+      createRegistry: () => registry(), createStore: () => store(), createRuntime: value => { created = value; return runtime; },
+    });
+    const notification = vi.fn();
+    const identity = { version: 1, sessionId: "backend-1", turnToken: "00000000-0000-0000-0000-000000000001" };
+    const wire = { jsonrpc: "2.0", method: "_hermes/usage", params: { ...identity, tokens: "reported", cost: "unavailable" } };
+    created.onAcpMessage?.("inbound", wire);
+    expect(notification).not.toHaveBeenCalled();
+    const turn = port.startTurn({ text: "Work", requestId: "turn-1", onExtensionNotification: notification });
+    created.onExtensionNotification!("_hermes/turn_started", identity);
+    created.onAcpMessage?.("inbound", wire);
+    created.onExtensionNotification!("_hermes/usage", wire.params);
+    expect(notification).toHaveBeenCalledExactlyOnceWith("_hermes/usage", wire.params);
+    pending.settle(); await turn.result;
+    created.onAcpMessage?.("inbound", wire);
+    expect(notification).toHaveBeenCalledTimes(1);
+    await port.close({ reason: "active receipt settled" });
   });
 
   it("rejects forged permission session identifiers before delegating or applying full-auto policy", async () => {

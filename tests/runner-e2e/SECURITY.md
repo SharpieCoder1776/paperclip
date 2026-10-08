@@ -36,6 +36,9 @@ to a whole number from 1 through 200. Invalid or unlimited values fail before
 credential handoff. Public company/agent reads and post-run settlement must
 match the captured limit. Provider-key limits, campaign reservations, and
 unknown-cost holds remain separate spending controls.
+The public budget setting is resolved from the environment or local settings
+file before catalog construction, then pinned for children. Other file settings
+and credentials still load only at the normal later admission boundary.
 
 ## Short-lived Bedrock qualification
 
@@ -345,7 +348,7 @@ grading receipts alongside the existing sanitized run evidence. No private
 runner hook supplies the answer. The late duplicate probe uses the existing
 untraced public POST helper and requires its actual HTTP 409 status; response
 bodies are withheld. Source admission precedes credential handoff, both public
-budgets are 200 cents, OpenRouter cost must settle, and automatic retries remain
+budgets match the captured bounded limit, OpenRouter cost must settle, and automatic retries remain
 disabled. Registered local/Daytona cells are pending qualification, not permission
 to launch a paid campaign or a claim of remote coverage.
 
@@ -356,5 +359,5 @@ those PIDs. Cancellation goes through the normal browser Stop control and public
 board API. No question answer is delivered; the only response attempt is a late
 fixture answer that must be rejected. Retained evidence uses the existing
 sanitizer and screenshot publication gates. The cell reuses the selected key
-allocation and 200-cent budgets, with zero automatic retries. It neither creates
+allocation and captured bounded budgets, with zero automatic retries. It neither creates
 remote resources nor grants permission to use another secret.

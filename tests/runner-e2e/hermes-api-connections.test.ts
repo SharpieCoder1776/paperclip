@@ -5,6 +5,14 @@ import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { explicitlyRequestsFileOutput, explicitlyRequestsTaskDocumentOutput } from "../../server/src/services/native-runtime/native-deliverable-feedback.js";
 import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesOpenRouterWorkflow, isHermesConnectionSuite, HERMES_NATIVE_INTERACTION_SUITE, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, hasHermesNativeQuestionStop, resolveHermesQualificationBudgetCents } from "./hermes-api-connections.js";
 
+const settings = vi.hoisted(() => ({ contents: undefined as string | undefined }));
+vi.mock("node:fs", async importOriginal => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return { ...actual, readFileSync: ((file: Parameters<typeof actual.readFileSync>[0], options: unknown) =>
+    settings.contents !== undefined && String(file).endsWith("/.env.runner-e2e.local")
+      ? settings.contents : actual.readFileSync(file, options as never)) };
+});
+
 describe("Hermes native browser questions", () => {
   const suite = runnerSuites.find(s => s.id === HERMES_NATIVE_INTERACTION_SUITE)!;
   const cells = runnerMatrix.filter(e => e.suite.id === suite.id);
@@ -134,7 +142,8 @@ describe("Hermes native browser questions", () => {
   });
   it.each(["missing", "no-created", "no-outcome", "duplicate-created", "duplicate-outcome", "second-request-other-id", "cancelled", "expired", "wrong-action", "wrong-answer",
     "wrong-answer-order", "wrong-input", "wrong-provider", "semantic-tool", "wrong-adapter", "wrong-type", "wrong-status", "wrong-request-turn",
-    "wrong-event-turn", "wrong-outcome-turn", "foreign-row", "foreign-event", "wrong-schema", "wrong-version", "wrong-protocol", "wrong-order", "missing-sequence"])("rejects %s evidence", fault => {
+    "wrong-event-turn", "wrong-outcome-turn", "foreign-row", "foreign-event", "wrong-schema", "wrong-version", "wrong-protocol", "wrong-order", "missing-sequence",
+    "foreign-source", "foreign-session", "not-runner", "created-not-runner", "missing-source", "missing-session"])("rejects %s evidence", fault => {
     const rows = structuredClone(native()) as ReturnType<typeof native>;
     const created = rows[0]!.payload.prpEvent as Record<string, any>, resolved = rows[1]!.payload.prpEvent as Record<string, any>;
     const request = created.payload.request;
@@ -169,6 +178,12 @@ describe("Hermes native browser questions", () => {
     if (fault === "wrong-protocol") rows[1]!.protocolSchemaVersion = 2;
     if (fault === "wrong-order") resolved.sourceSeq = 1;
     if (fault === "missing-sequence") delete resolved.sourceSeq;
+    if (fault === "foreign-source") resolved.sourceInstanceId = "another-runner";
+    if (fault === "foreign-session") resolved.normalizedSessionId = "another-session";
+    if (fault === "not-runner") resolved.sourceKind = "controller";
+    if (fault === "created-not-runner") created.sourceKind = "controller";
+    if (fault === "missing-source") delete created.sourceInstanceId;
+    if (fault === "missing-session") delete created.normalizedSessionId;
     expect(grade(rows)).toBe(false);
   });
   it.each(["question-count", "mode", "id", "prompt", "required", "choices", "option-id", "option-label", "custom-disabled"])("rejects a changed native form: %s", fault => {
@@ -187,6 +202,61 @@ describe("Hermes native browser questions", () => {
 });
 
 describe("Hermes managed API connection qualification", () => {
+  it.each(["0", "201", "100.0", ""])("rejects invalid local settings budget %s before catalog construction", async raw => {
+    vi.stubEnv("PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS", undefined);
+    settings.contents = `PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS=${raw}\n`;
+    vi.resetModules();
+    try {
+      await expect(import("./catalog.js")).rejects.toThrow("integer from 1 to 200 cents");
+      expect(process.env.PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS).toBeUndefined();
+    } finally {
+      settings.contents = undefined;
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+  it("preserves an explicit environment budget ahead of local settings", async () => {
+    vi.stubEnv("PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS", "100");
+    settings.contents = "PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS=0\n";
+    vi.resetModules();
+    try {
+      const bounded = await import("./hermes-api-connections.js");
+      expect(bounded.HERMES_API_CONNECTION_BUDGET_CENTS).toBe(100);
+      expect(process.env.PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS).toBe("100");
+    } finally {
+      settings.contents = undefined;
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
+  it("captures the local settings budget before catalog construction and pins it for child processes", async () => {
+    vi.stubEnv("PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS", undefined);
+    const existingCredential = process.env.OPENROUTER_API_KEY;
+    settings.contents = "# Fixture-only public configuration\nexport PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS='100'\nOPENROUTER_API_KEY=never-load-this-fixture-value\n";
+    vi.resetModules();
+    try {
+      const catalog = await import("./catalog.js");
+      const bounded = await import("./hermes-api-connections.js");
+      const cell = catalog.runnerMatrix.find(cell => cell.id === "hermes-native-interactions.runner-acpx-hermes.local.native-question-batch-stop")!;
+      expect(bounded.HERMES_API_CONNECTION_BUDGET_CENTS).toBe(100);
+      expect(cell.suite.definitionMetadata).toMatchObject({ budgetMonthlyCents: 100 });
+      expect(process.env.PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS).toBe("100");
+      const child = buildRunnerE2EProcessEnvironment(process.env, [cell]);
+      expect(child.PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS).toBe("100");
+      expect(process.env.OPENROUTER_API_KEY).toBe(existingCredential);
+      // The late full settings loader preserves an already captured value.
+      settings.contents = "PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS=200\n";
+      vi.resetModules();
+      const reloaded = await import("./catalog.js");
+      const next = reloaded.runnerMatrix.find(next => next.id === cell.id)!;
+      expect(next.suiteDefinitionHash).toBe(cell.suiteDefinitionHash);
+      expect(next.suite.definitionMetadata).toMatchObject({ budgetMonthlyCents: 100 });
+    } finally {
+      settings.contents = undefined;
+      vi.unstubAllEnvs();
+      vi.resetModules();
+    }
+  });
   it.each([[undefined, 200], ["1", 1], ["100", 100], ["200", 200]] as const)("admits the bounded campaign limit %s", (raw, expected) => {
     expect(resolveHermesQualificationBudgetCents(raw)).toBe(expected);
   });

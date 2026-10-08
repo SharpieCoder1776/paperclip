@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { once } from 'node:events';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -215,6 +215,24 @@ for (const { interactionKind, nativeQuestionAction } of cases) test(nativeQuesti
         input: usage.payload.usage.runDelta.inputTokens, output: usage.payload.usage.runDelta.outputTokens,
         complete: usage.payload.usage.runDeltaComplete,
       }, { input: 10, output: 5, complete: true }, 'Stopped clarification lost final native prompt usage');
+      // Informational notices enter durable PRP evidence rather than the
+      // normalized NativeSession lifecycle stream. Assert the actual carrier.
+      const controlPlane = JSON.parse(await readFile(join(root, 'runner/control-plane/control-plane-state.json'), 'utf8'));
+      const committed = controlPlane.committedEvents.map(event => event.envelope.payload);
+      const receipts = committed.filter(event => event.eventType === 'provider.notice.recorded'
+        && event.payload.category === 'hermes_usage_provenance');
+      assert.equal(receipts.length, 1, 'Stopped clarification lost its owned Hermes usage extension');
+      assert.equal(receipts[0].schema, 'paperclip.prp.event.v1');
+      assert.equal(receipts[0].sourceKind, 'runner');
+      assert.equal(receipts[0].sourceInstanceId, 'hermes-prp-runner');
+      assert.equal(receipts[0].normalizedSessionId, identity.sessionId);
+      assert.equal(receipts[0].runId, identity.runId);
+      assert.equal(receipts[0].turnId, 'hermes-prp-turn');
+      assert.equal(receipts[0].payload.details.find(detail => detail.name === 'Token usage')?.value, 'reported');
+      const committedTerminals = committed.filter(event => event.eventType === 'turn.cancelled');
+      assert.equal(committedTerminals.length, 1);
+      assert.equal(committedTerminals[0].turnId, receipts[0].turnId);
+      assert.ok(receipts[0].sourceSeq < committedTerminals[0].sourceSeq, 'Usage provenance arrived after cancelled settlement');
       await session.close({ reason: 'native clarification stopped' });
       assert.equal((await session.snapshot()).semanticResult, null, 'Stop invented task completion');
       return;

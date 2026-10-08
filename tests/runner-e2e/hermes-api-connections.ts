@@ -22,11 +22,31 @@ export function resolveHermesQualificationBudgetCents(raw?: string): number {
   }
   return Number(raw);
 }
-// Capture one immutable campaign limit before any credential handoff. Fixture
-// creation, public readback, settlement and definition identity use this value.
-export const HERMES_API_CONNECTION_BUDGET_CENTS = resolveHermesQualificationBudgetCents(
-  process.env.PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS,
-);
+function captureHermesQualificationBudgetCents(): number {
+  const key = "PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS";
+  let raw = process.env[key];
+  if (raw === undefined) {
+    let contents: string | undefined;
+    try { contents = readFileSync(new URL("../../.env.runner-e2e.local", import.meta.url), "utf8"); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+    // Read only this public setting. Credentials still load after source and
+    // runtime admission in launch.ts. Use the full loader's first-value and
+    // quoting rules, without importing other settings into the environment.
+    for (const line of contents?.split(/\r?\n/) ?? []) {
+      const match = /^(?:export\s+)?PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS=(.*)$/.exec(line.trim());
+      if (!match) continue;
+      raw = match[1]!.trim();
+      if ((raw.startsWith('"') && raw.endsWith('"')) || (raw.startsWith("'") && raw.endsWith("'"))) raw = raw.slice(1, -1);
+      break;
+    }
+  }
+  const budget = resolveHermesQualificationBudgetCents(raw);
+  // The late settings loader preserves this captured value. Every child sees
+  // the same validated limit that already identifies the launcher's catalog.
+  process.env[key] = String(budget);
+  return budget;
+}
+export const HERMES_API_CONNECTION_BUDGET_CENTS = captureHermesQualificationBudgetCents();
 export const HERMES_NATIVE_INTERACTION_SUITE = "hermes-native-interactions";
 export const isHermesConnectionSuite = (suiteId: string) =>
   suiteId === "hermes-api-connections" || suiteId === "hermes-bedrock-connections" || suiteId === HERMES_NATIVE_INTERACTION_SUITE;
@@ -122,7 +142,11 @@ export function hasExactHermesNativeQuestionResponse(input: {
   const outcomes = relevant.filter(({ event }) => event.eventType !== "runtime_request.created");
   if (created.length !== 1 || outcomes.length !== 1) return false;
   const request = record(record(created[0]!.event.payload).request), outcome = outcomes[0]!.event;
-  return hasAcpxNativeOrigin(request.origin, "hermes", "_hermes/ask_questions")
+  const origin = created[0]!.event;
+  return origin.sourceKind === "runner" && [origin.sourceInstanceId, origin.normalizedSessionId].every(present)
+    && outcome.sourceKind === "runner" && outcome.sourceInstanceId === origin.sourceInstanceId
+    && outcome.normalizedSessionId === origin.normalizedSessionId
+    && hasAcpxNativeOrigin(request.origin, "hermes", "_hermes/ask_questions")
     && request.type === "input" && request.status === "pending" && request.turnId === input.turnId
     && isDeepStrictEqual(request.input, input.questionSet)
     && outcome.eventType === "runtime_request.resolved" && record(outcome.payload).action === "submit"

@@ -310,6 +310,24 @@ export async function openQualifiedAcpxRuntime(
   const cursorInstructions = options.profile.agent === "cursor"
     ? createCursorInstructionAdmission(options.systemInstructions)
     : null;
+  const acceptExtensionNotification: NonNullable<AcpRuntimeOptions["onExtensionNotification"]> = (method, params) => {
+    const active = extensionBoundary.active;
+    if (options.profile.agent === "hermes" && method === "_hermes/turn_started") {
+      if (!active || !ownsExtensionTurn(active, params) || params.version !== 1 || typeof params.turnToken !== "string" || !/^[0-9a-f-]{36}$/.test(params.turnToken) || active.nativeTurnToken) throw new Error("Invalid Hermes turn binding");
+      active.nativeTurnToken = params.turnToken;
+      return;
+    }
+    // Stop revokes requests and activity immediately. Only the admitted native
+    // prompt's exact final usage may cross its cancelled boundary until result
+    // settlement. Stream/process closure retires this receipt window.
+    const cancelledUsage = options.profile.agent === "hermes" && method === "_hermes/usage"
+      && active !== null && extensionBoundary.cancelledReceiptOwner === active && extensionBoundary.active === active
+      && params.sessionId === active.sessionId && params.version === 1
+      && !!active.nativeTurnToken && params.turnToken === active.nativeTurnToken;
+    if (!extensionNotifications.has(method) || !active?.onNotification || (!ownsExtensionTurn(active, params) && !cancelledUsage)) return;
+    if (options.profile.agent === "hermes" && (params.version !== 1 || !active.nativeTurnToken || params.turnToken !== active.nativeTurnToken)) throw new Error("Hermes activity belongs to a stale turn");
+    active.onNotification(method, params.sessionId === undefined ? { ...params, sessionId: active.sessionId } : params);
+  };
   const runtimeOptions: GoalAwareAcpRuntimeOptions = {
     cwd: options.cwd,
     ...(cursorInstructions || modeBinding ? { protocolGuardFactory: () => {
@@ -351,24 +369,20 @@ export async function openQualifiedAcpxRuntime(
       return response;
     },
     onExtensionNotification: (method, params) => {
-      const active = extensionBoundary.active;
-      if (options.profile.agent === "hermes" && method === "_hermes/turn_started") {
-        if (!active || !ownsExtensionTurn(active, params) || params.version !== 1 || typeof params.turnToken !== "string" || !/^[0-9a-f-]{36}$/.test(params.turnToken) || active.nativeTurnToken) throw new Error("Invalid Hermes turn binding");
-        active.nativeTurnToken = params.turnToken;
-        return;
-      }
-      // Stop revokes requests and activity immediately, but the native prompt
-      // still settles its owned work and billing. Admit only its final usage
-      // notification, with the exact negotiated session/token, until result
-      // settlement. Stream/process closure never opens this receipt window.
-      const cancelledUsage = options.profile.agent === "hermes" && method === "_hermes/usage"
-        && active !== null && extensionBoundary.cancelledReceiptOwner === active && extensionBoundary.active === active
-        && params.sessionId === active.sessionId && params.version === 1
-        && !!active.nativeTurnToken && params.turnToken === active.nativeTurnToken;
-      if (!extensionNotifications.has(method) || !active?.onNotification || (!ownsExtensionTurn(active, params) && !cancelledUsage)) return;
-      if (options.profile.agent === "hermes" && (params.version !== 1 || !active.nativeTurnToken || params.turnToken !== active.nativeTurnToken)) throw new Error("Hermes activity belongs to a stale turn");
-      active.onNotification(method, params.sessionId === undefined ? { ...params, sessionId: active.sessionId } : params);
+      // Hermes usage has one wire-observer path, including before cancellation.
+      // Do not deliver it twice through ACPX's ordinary extension callback.
+      if (options.profile.agent === "hermes" && method === "_hermes/usage") return;
+      acceptExtensionNotification(method, params);
     },
+    ...(options.profile.agent === "hermes" ? { onAcpMessage: (direction: "inbound" | "outbound", message: unknown) => {
+      // Pinned ACPX 0.13.1 aborts its elicitation controller before Hermes emits
+      // final usage, and drops extensions at that inner gate. Its public wire
+      // observer still sees the notification. Reapply our exact turn/session
+      // admission here; this grants no request or activity authority after Stop.
+      const wire = objectRecord(message);
+      if (direction !== "inbound" || wire.jsonrpc !== "2.0" || "id" in wire || wire.method !== "_hermes/usage") return;
+      acceptExtensionNotification("_hermes/usage", objectRecord(wire.params));
+    } } : {}),
     nonInteractivePermissions: "fail",
     permissionPolicy: {
       ...options.permissionPolicy,

@@ -1484,3 +1484,46 @@ database tests), and Hermes releases assigned skill copies after a credential
 or state-collection failure only once runtime exit is verified (141 affected
 runtime tests). The local TypeScript runtime must be rebuilt from the current
 source before the next paid campaign. No local Docker or Rust build is used.
+
+The `36125adb4e` 100-cent Stop campaign retains its failed/cleanup-failed grade
+after 300.437 seconds. The browser Stop is acknowledged, one native input and
+its turn cancel in order, the question becomes expired, and the task stays in
+progress. All nine observed PID/start identities retire. Billing remains
+unpriced despite complete reported token accounting (31,665 input and 218
+output tokens), so the independent settlement gate correctly fails. The private
+recovery state and unknown-cost hold remain retained. This is progress on native
+cancellation, not a live Stop qualification pass.
+
+Qualification review identified two independent evidence gaps. Six negative
+runner/session identity cases and a local-settings catalog case first failed.
+Answer delivery now requires the created request and resolved receipt to name
+the same runner and normalized session. The public budget setting is read and
+validated before catalog construction and pinned into the child environment;
+credentials and other file settings still load at the normal later boundary.
+Definitions advance to native version 7, API/Bedrock version 3 and extended
+version 4. Earlier measurements retain their source, definition and grade.
+
+Source inspection finds that pinned ACPX also drops extension notifications
+when its native elicitation controller is aborted, before Paperclip's outer
+cancelled-receipt boundary. Hermes usage now enters through ACPX's public
+inbound-message observer, with the same exact native session and negotiated
+turn-token checks. The ordinary extension callback excludes that one method
+to avoid duplicate delivery. Other notifications and requests retain their
+existing admission paths. No ACPX version or dependency lock changes.
+
+The strengthened production transport fixture checks the actual durable PRP
+carrier: one owned Hermes usage-provenance notice precedes the cancelled turn,
+and both retain their runner, session, run and turn identities. The same fixture
+fails with the previous adapter because its receipt is missing, then passes with
+the repaired adapter and the verified cloud-built Mac daemon. The comparison
+restores the repaired source and bundle byte for byte. An earlier fixture
+attempt inspected the normalized lifecycle stream, which does not carry these
+informational notices; that failed attempt is retained and is not the regression
+proof. This fixture has no provider credentials and proves transport, not paid
+OpenRouter charge settlement.
+
+Final local checks pass 184 affected ACP tests, both Runner TypeScript checks,
+and 2,035 Product E2E support tests with one platform skip. Product E2E TypeScript
+also passes. A fresh committed-source browser Stop, current-head cloud checks,
+and the remaining release matrix are still required. No local Docker or Rust
+build was used, and no unknown-cost hold was released.

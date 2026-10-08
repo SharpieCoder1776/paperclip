@@ -1488,12 +1488,23 @@ oracle. Older behavioral passes do not prove this accounting requirement.
 Before launching, `PAPERCLIP_RUNNER_E2E_HERMES_BUDGET_CENTS` can lower both
 budgets to a whole number from 1 through 200 cents. Missing configuration keeps
 the 200-cent default; malformed, zero, and higher limits fail before credential
-handoff. The campaign captures one immutable value for fixture creation, public
-budget readback, settlement health, and catalog definition identity. Every
+handoff. The public setting can also come from `.env.runner-e2e.local`. It is
+validated before catalog construction and pinned into the child environment;
+explicit environment configuration takes precedence. This early step loads no
+credentials or other file settings. The campaign captures one immutable value
+for fixture creation, public budget readback, settlement health, and catalog
+definition identity. Every
 observed budget must match it exactly. A lower cap does not settle unknown
-charges or release a previous attempt's reservation. Definition versions 3
-(extended harnesses), 2 (Hermes API/Bedrock), and 6 (native interactions) record
-this bounded option.
+charges or release a previous attempt's reservation. Definition versions 4
+(extended harnesses), 3 (Hermes API/Bedrock), and 7 (native interactions) record
+this bounded option and consistent settings capture. Native answer receipts
+must also retain the original runner and normalized session identities.
+
+The credential-free native Stop fixture checks usage provenance on its durable
+PRP carrier before the cancelled terminal, including runner, session, run and
+turn identity. Informational notices are not part of the normalized lifecycle
+stream. This transport proof does not replace a paid browser campaign's charge
+settlement or process-cleanup checks.
 
 Before loading local credentials, the launcher records the checked-out controller
 SHA and ref for every selected Hermes candidate, including API and Bedrock cells.
