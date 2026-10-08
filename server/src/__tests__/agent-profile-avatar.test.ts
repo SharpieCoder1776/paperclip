@@ -87,6 +87,20 @@ it("rejects other agents, companies, viewers, and foreign asset references", asy
   await request(appFor({ type: "agent", agentId: f.agent.id, companyId: f.company.id })).get(foreign.avatarUrl).expect(404);
 });
 
+it.each([
+  { kind: "task_bridge" as const, parentIssueId: randomUUID() },
+  { kind: "skill_test" as const, issueId: randomUUID() },
+])("rejects profile changes by restricted %s credentials", async keyScope => {
+  const f = await fixture();
+  const app = appFor({ type: "agent", agentId: f.agent.id, companyId: f.company.id, keyScope });
+  const path = `/api/companies/${f.company.id}/agents/${f.agent.id}/avatar`;
+  await request(app).put(path).send({ imageBase64 }).expect(403);
+  await request(app).put(path).send({ imageBase64: null }).expect(403);
+  expect(await db.select().from(assets).where(eq(assets.companyId, f.company.id))).toHaveLength(0);
+  expect(await db.select().from(activityLog).where(eq(activityLog.companyId, f.company.id))).toHaveLength(0);
+  expect((await agentService(db).getById(f.agent.id))?.appearance).toEqual(f.agent.appearance);
+});
+
 it("rejects URLs, SVG, corrupt and oversized images, unsupported fields and inactive agents", async () => {
   for (const input of ["https://example.test/avatar.png", Buffer.from("<svg xmlns=\"http://www.w3.org/2000/svg\"/>").toString("base64"), Buffer.from("broken").toString("base64"), Buffer.alloc(MAX_AGENT_AVATAR_BYTES + 1).toString("base64")]) {
     await expect(normalizeAgentAvatar(input)).rejects.toThrow();

@@ -77,7 +77,7 @@ export class RunnerdDotDriver implements HarnessDriver {
 
 async function readProviderCheckpoint(options: RunnerdDotDriverOptions): Promise<Record<string, unknown> | null> {
   if (options.readProviderState) return options.readProviderState();
-  const path = resolve(options.stateDirectory, "runner/dot-provider-state.json");
+  const path = resolve(options.runnerStateDirectory ?? resolve(options.stateDirectory, "runner"), "dot-provider-state.json");
   if (!existsSync(path)) return null;
   if (statSync(path).size > 32 * 1024 * 1024) throw new Error("dot_provider_checkpoint_too_large");
   return JSON.parse(readFileSync(path, "utf8"));

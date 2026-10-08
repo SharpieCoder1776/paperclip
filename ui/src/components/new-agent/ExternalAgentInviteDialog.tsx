@@ -24,6 +24,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
   const [preset, setPreset] = useState<ExternalAgentPreset | null>(null);
   const [invitation, setInvitation] = useState<DotInvitation | null>(null);
   const [pairing, setPairing] = useState<DotPairing | null>(null);
+  const [expiredPairingBindingId, setExpiredPairingBindingId] = useState<string | null>(null);
   const [genericPrompt, setGenericPrompt] = useState("");
   const attemptedAutomaticPairing = useRef(false);
   const experimental = useQuery({ queryKey: queryKeys.instance.experimentalSettings, queryFn: instanceSettingsApi.getExperimental });
@@ -62,6 +63,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
     mutationFn: async (replaceBindingId?: string) => {
       const result = await dotInvitationsApi.pair(companyId, invitation!.agent.id, replaceBindingId);
       setPairing(result);
+      setExpiredPairingBindingId(null);
       // Do not retain a one-use code in React Query's mutation cache.
     },
     onSuccess: () => { void cache.invalidateQueries({ queryKey: key }); },
@@ -75,7 +77,8 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
     && !["pending_approval", "paused", "terminated"].includes(state.data.agentStatus)
     && (!binding || binding.status === "pairing");
   const preparePairing = canPreparePairing && !pairing && !state.error && !pair.isError
-    && !attemptedAutomaticPairing.current;
+    && !attemptedAutomaticPairing.current
+    && (!expiredPairingBindingId || binding?.id === expiredPairingBindingId);
   useEffect(() => {
     // Revalidate cached connection state before rotating an unfinished capability.
     // Attempt once per opening/expiry, so failed requests and other tabs cannot cause a renewal loop.
@@ -88,6 +91,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
     if (!pairing) return;
     const timer = window.setTimeout(() => {
       attemptedAutomaticPairing.current = false;
+      setExpiredPairingBindingId(pairing.bindingId);
       setPairing(null);
     }, Math.max(0, Date.parse(pairing.expiresAt) - Date.now()));
     return () => window.clearTimeout(timer);
@@ -110,7 +114,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
     if (unavailable) { void state.refetch(); return; }
     if (state.error) { void state.refetch(); return; }
     if (generate.error || !invitation) { if (preset) generate.mutate(preset); return; }
-    if (pair.error) { pair.mutate(binding?.status === "pairing" ? binding.id : undefined); return; }
+    if (pair.error && !binding?.connected) { pair.mutate(binding?.status === "pairing" ? binding.id : undefined); return; }
     test.mutate();
   };
   return <Dialog open onOpenChange={open => { if (!open) onClose(); }}>

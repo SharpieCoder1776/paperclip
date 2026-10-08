@@ -126,7 +126,7 @@ it.each(["shutdown", "unexpected exit"] as const)("classifies a real Rust %s bef
   }
 }, 45000);
 
-it.each(["local", "external launcher"])("reattaches the %s Rust bridge without duplicate operations and refuses lost checkpoints", async launch => {
+it.each(["local", "custom local directory", "external launcher"])("reattaches the %s Rust bridge without duplicate operations and refuses lost checkpoints", async launch => {
   const root = await mkdtemp(join(tmpdir(), "dot-driver-recovery-"));
   await writeFile(join(root, "AGENTS.md"), "Use only the synthetic counter.");
   const input = execution(root);
@@ -153,6 +153,7 @@ it.each(["local", "external launcher"])("reattaches the %s Rust bridge without d
       attach: async callback => { send = callback; return async () => { send = undefined; }; } },
   };
   const runnerState = launch === "local" ? join(root, "state/runner") : join(root, "external-runtime/runner");
+  if (launch === "custom local directory") options.runnerStateDirectory = runnerState;
   if (launch === "external launcher") {
     await mkdir(runnerState, { recursive: true });
     options.runnerStateDirectory = runnerState;

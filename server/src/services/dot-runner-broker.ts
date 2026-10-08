@@ -384,21 +384,28 @@ function createBroker(db: Db) {
         throw fail("Connect and subscribe the Dot first.");
       }
       const nonce = randomBytes(24).toString("base64url");
-      await db.transaction(async tx => {
+      const available = await db.transaction(async tx => {
         const [b] = await tx.select().from(bindings).where(eq(bindings.id, state.id)).for("update");
-        if (!b || b.revokedAt || b.generation !== state.generation) throw fail("Binding authority changed.");
+        if (!b || b.revokedAt || b.generation !== state.generation) {
+          if (options.automatic) return false;
+          throw fail("Binding authority changed.");
+        }
         if (options.automatic && (b.challengeHash || b.readyAt)) return;
         if (b.challengeHash && b.challengeExpiresAt && b.challengeExpiresAt > new Date()) return;
         const [subscription] = await tx.select({ id: mcpEventSubscriptions.id }).from(mcpEventSubscriptions).where(and(
           eq(mcpEventSubscriptions.bindingId, b.id), eq(mcpEventSubscriptions.grantId, b.grantId!),
           isNull(mcpEventSubscriptions.stoppedAt), gt(mcpEventSubscriptions.expiresAt, new Date())));
-        if (!subscription) throw fail("The event subscription is no longer verified.");
+        if (!subscription) {
+          if (options.automatic) return false;
+          throw fail("The event subscription is no longer verified.");
+        }
         await tx.update(bindings).set({ challengeHash: hash(nonce), challengeExpiresAt: new Date(Date.now() + 10 * 60_000), updatedAt: new Date() }).where(eq(bindings.id, b.id));
         await tx.insert(mailbox).values({ companyId, bindingId: b.id, bindingGeneration: b.generation,
           kind: "readiness_challenge", sourceEventId: "challenge_" + randomUUID(), references: { challenge: nonce } });
         await logActivity(tx as unknown as Db, { companyId, actorType: "user", actorId: b.operatorId,
           action: "dot.event_test_requested", entityType: "agent", entityId: agentId, details: { bindingId: b.id } });
       });
+      if (available === false) return { status: "unavailable" };
       return { status: "pending", message: "Waiting for the Dot to receive the event, read its mailbox and complete the harmless challenge." };
     },
     async confirmChallenge(principal: McpPrincipal, nonce: string) {

@@ -374,3 +374,39 @@ it("offers a retry after automatic renewal fails without rotating on every poll"
   await click("Copy setup prompt");
   expect(invites.copy.mock.calls[0][0]).toContain("retried-code");
 });
+
+
+it("does not let an older window renew another window's fresh Dot prompt", async () => {
+  const connection = { enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle", binding: null as any };
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: null });
+  dotApi.connection.mockImplementation(async () => ({ ...connection }));
+  dotApi.pair.mockImplementation(async () => {
+    const expiresAt = new Date(Date.now() + 350).toISOString();
+    connection.binding = pendingDotBinding("old-window-binding", expiresAt);
+    return { bindingId: connection.binding.id, pairingCode: "old-code", expiresAt };
+  });
+  await openDotSetup();
+  connection.binding = pendingDotBinding("other-window-binding", new Date(Date.now() + 900000).toISOString());
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 420)); });
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+  expect(document.body.textContent).toContain("Create a new prompt");
+  expect(document.body.textContent).not.toContain("Copy setup prompt");
+});
+
+it("retries the event test after Dot connects during a failed prompt renewal", async () => {
+  const connection = { enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle",
+    binding: pendingDotBinding("saved-binding", new Date(Date.now() - 60000).toISOString()) as any };
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: connection.binding });
+  dotApi.connection.mockImplementation(async () => ({ ...connection }));
+  dotApi.pair.mockRejectedValueOnce(new Error("Dot already connected."));
+  await openDotSetup();
+  connection.binding = { ...connection.binding, status: "connected", connected: true, subscriptionVerified: true,
+    challengeExpiresAt: new Date(Date.now() - 1000).toISOString() };
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(document.body.textContent).not.toContain("Dot already connected.");
+  await click("Retry test event");
+  expect(dotApi.retry).toHaveBeenCalledExactlyOnceWith("company-1", "dot-agent", "saved-binding");
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+});
