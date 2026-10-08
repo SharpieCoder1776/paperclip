@@ -519,12 +519,13 @@ describe("native backend factory", () => {
     },
   );
 
-  it("keeps direct Pi execution held in the prerequisite layer", async () => {
+  it("constructs the qualified Pi backend without a diagnostic opt-in or provider launch", async () => {
     const input = acpxExecution();
     if (input.provider.kind !== "acpx") throw new Error("invalid fixture");
     const profile = resolveQualifiedAcpxProfile("pi", "custom/explicit-test-model");
     Object.assign(input.provider, { agent: "pi", model: profile.qualificationModel, piThinkingLevel: "low", profile });
-    expect(() => createNativeSessionBackend(input, { acpxRuntimeDirectory: "/runtime" })).toThrow(/candidate direct execution requires completed qualification/);
+    const backend = createNativeSessionBackend(input, { acpxRuntimeDirectory: "/runtime" });
+    await expect(backend.descriptor()).resolves.toMatchObject({ name: "acpx_runtime", version: "0.13.1" });
   });
 
   it.each(["copilot"] as const)("rejects unqualified %s direct execution even with an exact persisted profile", agent => {

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   assertAgentCoreProfileRecoveryBinding,
@@ -456,12 +456,12 @@ describe("Paperclip Runner native provider configuration", () => {
     ).toThrow("provider changed after this run selected its native backend");
   });
 
-  it("rejects an unqualified Pi model before a native descriptor is persisted", () => {
-    expect(() =>
+  it("preserves a caller-selected Pi model in the native descriptor", () => {
+    expect(
       resolvePaperclipRunnerNativeProviderInput({
         backend: "acpx_runtime",
         adapterConfig: { provider: "acpx", acpxAgent: "pi", model: "pi-model" },
       }),
-    ).toThrow("requires exact model openrouter/deepseek/deepseek-v4-flash-0731");
+    ).toMatchObject({ provider: "acpx", acpxAgent: "pi", model: "pi-model" });
   });
 });
