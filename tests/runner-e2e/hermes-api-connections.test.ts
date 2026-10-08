@@ -21,7 +21,7 @@ describe("Hermes native image input", () => {
     expect(JSON.parse(env.PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent: "hermes", model: HERMES_IMAGE_INPUT_MODEL }]);
     expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cells[0]!, suite: { ...suite, manualOnly: false } }])).toThrow("explicit");
     expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cells[0]!, profile: { ...cells[0]!.profile, qualificationCandidate: "pi" } }])).toThrow("explicit");
-    expect(suite.definitionMetadata).toMatchObject({ version: 1, qualification: "pending", providerTurns: 1,
+    expect(suite.definitionMetadata).toMatchObject({ version: 2, qualification: "pending", providerTurns: 1,
       maximumAttemptsPerCell: 1, budgetMonthlyCents: 200 });
   });
   it("keeps the expected code out of prompt, filename and PNG metadata", () => {

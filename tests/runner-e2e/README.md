@@ -1667,6 +1667,9 @@ copy must match the independent source bytes, MIME type, size, company and task.
 The durable run history must contain native semantic completion and no file,
 OCR or image-analysis tool substitute. Explicit titles prevent an unrelated
 automatic title-generation operation from preceding the image turn.
+Version 2 requires every saved image check to pass before the overall result
+can pass. It evaluates this gate after collecting account and billing evidence,
+so wrong image bytes or forbidden tools cannot qualify on a correct final code.
 
 The suite reuses managed account attribution, pre-credential source/runtime
 admission, bounded company/agent budgets, per-run reported billing and cleanup.

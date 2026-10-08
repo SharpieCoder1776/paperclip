@@ -3017,6 +3017,7 @@ for (const execution of executions) {
       }
       if (isHermesConnectionSuite(execution.suite.id)) {
         if (!fixtures?.aiConnection || !issue?.id || !hermesApiAccountOwner?.expectedResponsibleUserId) throw new Error("Hermes connection qualification is missing its selected account, expected user or task");
+        let imageChecks: ReturnType<typeof gradeHermesImageInput> | undefined;
         if (execution.suite.id === HERMES_IMAGE_INPUT_SUITE) {
           const attachments = await api.get<Record<string, unknown>[]>(`/api/issues/${issue.id}/attachments`);
           const image = attachments[0];
@@ -3030,7 +3031,7 @@ for (const execution of executions) {
           }
           const events = selectedRuns.length === 1 ? await collectRunEvents<RunEventRecord>((afterSeq, limit) =>
             api.get(`/api/heartbeat-runs/${selectedRuns[0]!.id}/events?afterSeq=${afterSeq}&limit=${limit}`)) : [];
-          const imageChecks = gradeHermesImageInput({ nonce, companyId: fixtures.company.id, issueId: issue.id,
+          imageChecks = gradeHermesImageInput({ nonce, companyId: fixtures.company.id, issueId: issue.id,
             runId: selectedRuns[0]?.id ?? "", attachments, downloadedBytes, events });
           matcherResults.push(...imageChecks.map(check => ({ matcher: { kind: "json_path" as const, path: `hermesImage.${check.id}`, expected: true },
             passed: check.passed, detail: "The authorized uploaded image must match its source bytes and be read without a file-tool substitute." })));
@@ -3074,6 +3075,9 @@ for (const execution of executions) {
         matcherResults.push(...checks.map(check => ({ matcher: { kind: "json_path" as const, path: `hermesConnection.${check.id}`, expected: true }, passed: check.passed, detail: "Public native run metadata must match the selected managed API account and exact model." })));
         await writeSanitizedJson(snapshotsDir, "hermes-api-connection.json", { checks }, secrets);
         expect(checks.every(check => check.passed), "Hermes managed account and native model attribution").toBe(true);
+        if (execution.suite.id === HERMES_IMAGE_INPUT_SUITE) {
+          expect(imageChecks?.every(check => check.passed), "Hermes image bytes and native tool evidence").toBe(true);
+        }
       }
       if (isHermesOpenRouterWorkflow(execution)) {
         let receipts: Array<Awaited<ReturnType<typeof captureHermesOpenRouterSettlement>>> = [];

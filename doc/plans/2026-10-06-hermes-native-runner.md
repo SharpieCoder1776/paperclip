@@ -1614,3 +1614,18 @@ the fixture PNG was visually inspected. These checks validate preparation;
 a fresh committed-source live image run and current-head CI are required before
 claiming that coverage.
 The remaining full release matrix and actual Daytona proof still gate Hermes.
+
+### 2026-10-08 native image grading review
+
+Review of the image fixture at `9478ead982` finds that its checks are recorded
+after the generic matcher gate, allowing wrong downloaded bytes or a forbidden
+tool to escape the final verdict. Image definition version 2 explicitly requires
+every image check to pass after account and billing evidence is collected.
+The attempted version 1 launch stopped during its allowance read with HTTP 401,
+before a campaign, model call or new budget reservation. No live image grade
+exists to revise. The key refresh and a fresh committed-source version 2 run
+remain required; previous passing workflows do not qualify image input.
+The correction passes 259 focused image/account/catalog/report tests, 128
+native source checks and Product E2E typechecking. These credential-free checks
+include plausible wrong image bytes and forbidden-tool evidence; a browser
+campaign and fresh cloud CI remain separate requirements.
