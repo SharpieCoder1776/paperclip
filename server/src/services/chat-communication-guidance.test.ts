@@ -3,6 +3,15 @@ import { CHAT_PROVIDERS, updateChatEndpointSchema } from "@paperclipai/shared";
 import { buildChatCommunicationGuidance } from "./chat-communication-guidance.js";
 
 describe("initial medium communication guidance", () => {
+  it.each([true, false])("requires result and review updates in Slack (direct=%s)", (isDirectMessage) => {
+    const guidance = buildChatCommunicationGuidance({ provider: "slack", isDirectMessage });
+    expect(guidance).toContain("When you have results, update the user in the originating Slack");
+    expect(guidance).toContain("Put this update in your final response");
+    expect(guidance).toContain("When the user needs to review a plan, approve an action, or review a result");
+    expect(guidance).toContain("create the required human-input or approval interaction before you yield");
+    expect(guidance).toContain("do not continue gated work until the required approval is recorded");
+  });
+
   it("guides Slack presentation while retaining ordinary agent tools and explicit output requests", () => {
     const guidance = buildChatCommunicationGuidance({ provider: "slack", isDirectMessage: false, communicationInstructions: "Use customer-facing names." });
     expect(guidance).toContain("shared channel thread");
