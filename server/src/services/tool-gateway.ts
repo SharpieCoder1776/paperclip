@@ -1,3 +1,5 @@
+import { signalDatabaseWork } from "@paperclipai/db";
+import { DELIVERY_QUEUES } from "./delivery-queue-worker.js";
 import { composeConnectionInstructions } from "./connection-instructions.js";
 import { isInsufficientConnectionScope, INSUFFICIENT_CONNECTION_SCOPE_MESSAGE } from "./connection-permission-errors.js";
 import { boundedMcpToolName } from "./mcp-tool-names.js";
@@ -2607,7 +2609,11 @@ export function createToolGatewayService(
         issueId: input.session.issueId,
         interactionId: interaction.id,
       })
-      .onConflictDoNothing();
+      .onConflictDoNothing()
+      .then(
+        () => signalDatabaseWork(db, DELIVERY_QUEUES.toolAction),
+        (error) => { signalDatabaseWork(db, DELIVERY_QUEUES.toolAction, true); throw error; },
+      );
 
     await writeToolCallEvent({
       invocationId: input.invocation.id,

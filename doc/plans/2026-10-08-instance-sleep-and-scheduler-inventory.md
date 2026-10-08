@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: Implementation checklist; application behavior has not been changed
+Status: First five delivery queues migrated; remaining inventory is open
 
 Code baseline: `0ac194450`
 
@@ -158,6 +158,64 @@ without making the scheduler responsible for every source of activity.
 This order supersedes starting by routing the feedback polling loop through a
 generic scheduler. Event-driven improvements can ship before that scheduler is
 complete. The resulting service still needs an owned way to retry failures.
+
+## First implementation: five delivery queues
+
+The first change removes empty normal-path polling from these five lanes:
+
+- [x] **JOB-04 export dispatch:** feedback export enqueue wakes the worker.
+  The request handler and worker serialize uploads through the same service.
+- [x] **JOB-22 completion dispatch:** the task status transaction wakes the
+  completion worker without relying on a later activity publication.
+- [x] **JOB-23 continuation dispatch:** resolving a connection interaction
+  wakes its durable continuation worker.
+- [x] **JOB-25 answer dispatch:** the answer transaction wakes its delivery worker.
+- [x] **JOB-24 receipt dispatch:** creation of a tool-action receipt activates
+  recovery until its delivery completes. Review execution and expiry sweeps
+  remain separate, unchanged work.
+
+These checks cover dispatch, not the full completion criteria of the original
+JOB items below. An empty queue now has no retry timer and issues no periodic
+query. Outstanding work retains the former recovery cadence: five seconds for
+exports and the configured heartbeat scheduler interval for the other queues.
+Blocked deliveries and unanswered tool reviews still own recovery timers.
+Refining those into specific dependency events/deadlines remains future work.
+
+[`delivery-queue-worker.ts`](../../server/src/services/delivery-queue-worker.ts)
+centralizes admission, single-flight processing, retry timers, and shutdown for
+these five lanes. Its retry scheduling is a small boundary to adapt to SCH-01;
+it does not implement the instance-wide scheduler or external waker yet. The
+main heartbeat scheduler continues to own other jobs, so this change alone
+neither makes an instance sleep nor proves provider cost savings.
+
+[`work-signals.ts`](../../packages/db/src/work-signals.ts) adds process-local
+notifications to `createDb` transactions. The producers register a topic in
+scope of the write, and publication waits for the outer transaction to settle,
+including caller-owned transactions and nested savepoints. Rollback may cause
+one harmless empty reconciliation. A successful commit does not depend on
+subsequent telemetry, activity publication, or HTTP response code succeeding.
+
+Workers subscribe before startup recovery, remember writes that arrive during
+a sweep, and retry errors. If a transaction callback succeeds but the commit
+acknowledgement fails, the worker conservatively keeps recovery checks active
+until the process restarts. Neither an empty read nor delivery of an unrelated
+record can prove that an ambiguous commit will not appear later. An autocommit receipt
+write that fails uses the same conservative recovery mode. This exceptional
+path can keep an otherwise empty queue awake; it deliberately favors delivery
+recovery. Normal successful transactions have no empty-queue backstop.
+
+The supported writer boundary is one server process using its `createDb`
+instance and the instrumented service mutations. Startup recovers durable rows
+left by a crashed process. Direct SQL writers, a second independent database
+client, and other server replicas do not emit these local signals; supporting
+those writers requires an external notification/recovery design before relying
+on this consumer model. No persistent `LISTEN` connection is introduced.
+
+Verification covers all five producer signals against temporary PostgreSQL,
+completion delivery without route callbacks, consumer restart, nested commits,
+rollback and ambiguous commit, concurrent signals, retry, drain/standby gating,
+shutdown, and an hour of simulated empty-queue inactivity. Full queue claim and
+idempotency behavior remains covered by the existing delivery suites.
 
 ## Provider behavior and cost model
 

@@ -1,3 +1,4 @@
+import { createDeliveryQueueWorker, DELIVERY_QUEUES } from "./services/delivery-queue-worker.js";
 import { idleAdmissionMiddleware, trackIdleRequestHandlers } from "./middleware/idle-admission.js";
 import { isIdleTaskDrainActive, trackIdleWork } from "./services/task-admission.js";
 import { customerSuccessRoutes } from "./routes/customer-success.js";
@@ -482,6 +483,7 @@ export async function createApp(
     serverPort: number;
     storageService: StorageService;
     feedbackExportService?: {
+      hasPendingFeedbackTraces(): Promise<boolean>;
       flushPendingFeedbackTraces(input?: {
         companyId?: string;
         traceId?: string;
@@ -1187,41 +1189,17 @@ export async function createApp(
 
   jobCoordinator.start();
   scheduler.start();
-  let feedbackExportShuttingDown = false;
-  let feedbackExportTimer: ReturnType<typeof setInterval> | null = null;
-  const disableFeedbackExportFlushes = () => {
-    feedbackExportShuttingDown = true;
-    if (feedbackExportTimer) {
-      clearInterval(feedbackExportTimer);
-      feedbackExportTimer = null;
-    }
-  };
-  const flushPendingFeedbackExports = async () => {
-    if (feedbackExportShuttingDown || isWarmStandby() || isIdleTaskDrainActive()) return;
-    try {
-      await opts.feedbackExportService?.flushPendingFeedbackTraces();
-    } catch (err) {
-      if (isDatabaseConnectionUnavailableError(err)) {
-        disableFeedbackExportFlushes();
-        logger.warn(
-          { err },
-          "Disabling pending feedback export flushes because the database is unavailable",
-        );
-        return;
-      }
-      logger.error({ err }, "Failed to flush pending feedback exports");
-    }
-  };
-
-  feedbackExportTimer = opts.feedbackExportService
-    ? setInterval(() => {
-        void flushPendingFeedbackExports();
-      }, FEEDBACK_EXPORT_FLUSH_INTERVAL_MS)
+  const feedbackExportWorker = opts.feedbackExportService
+    ? createDeliveryQueueWorker({
+        db,
+        topic: DELIVERY_QUEUES.feedback,
+        retryMs: FEEDBACK_EXPORT_FLUSH_INTERVAL_MS,
+        run: () => opts.feedbackExportService!.flushPendingFeedbackTraces(),
+        hasPending: () => opts.feedbackExportService!.hasPendingFeedbackTraces(),
+        canRun: () => !isWarmStandby() && !isIdleTaskDrainActive(),
+        onError: (err) => logger.error({ err }, "Failed to flush pending feedback exports"),
+      })
     : null;
-  feedbackExportTimer?.unref?.();
-  if (opts.feedbackExportService) {
-    void flushPendingFeedbackExports();
-  }
   emailChannels.start();
   const flushChatPublications = async () => {
     await chatChannels.schedulePendingPublications();
@@ -1386,7 +1364,7 @@ export async function createApp(
       await publicMcpEvents?.stop();
       await dotMcpEvents?.stop();
       jobCoordinator.stop();
-      disableFeedbackExportFlushes();
+      await feedbackExportWorker?.stop();
       unsubscribeChatPublicationSignals();
       chatReconciliation.stop();
       if (chatPublicationTimer) {

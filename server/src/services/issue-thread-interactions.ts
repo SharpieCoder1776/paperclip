@@ -1,3 +1,5 @@
+import { signalDatabaseWork } from "@paperclipai/db";
+import { DELIVERY_QUEUES } from "./delivery-queue-worker.js";
 import { activeIssueInteractionCondition, historicalQuestionCondition } from "./issue-question-context.js";
 import {
   currentContinuationOrigins,
@@ -2823,6 +2825,7 @@ export function issueThreadInteractionService(
         .returning();
         if (!row) throw interactionAlreadyResolvedError();
         if (status === "accepted" || status === "rejected") {
+          signalDatabaseWork(tx, DELIVERY_QUEUES.connection);
           await tx.insert(connectionIntentDeliveries).values({ interactionId, companyId: issue.companyId }).onConflictDoNothing();
         }
         return row;
@@ -5017,6 +5020,7 @@ export function issueThreadInteractionService(
         // This answer updates conversation history only. It must not resume
         // the completed source run or enqueue new work for the closed task.
         if (!historicalAnswer) {
+          signalDatabaseWork(tx, DELIVERY_QUEUES.question);
           await tx
             .insert(issueQuestionResponseDeliveries)
             .values(questionResponseDeliveryValues(answered));

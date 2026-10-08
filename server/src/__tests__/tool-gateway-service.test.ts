@@ -1,3 +1,5 @@
+import { subscribeDatabaseWork } from "@paperclipai/db";
+import { DELIVERY_QUEUES } from "../services/delivery-queue-worker.js";
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -219,6 +221,8 @@ describeEmbeddedPostgres("tool gateway service", () => {
       runId: run.id,
     });
 
+    const notified = vi.fn();
+    const unsubscribe = subscribeDatabaseWork(db, DELIVERY_QUEUES.toolAction, notified);
     await expect(gateway.executeTool({
       sessionToken: session.token,
       tool: "mcp-remote-fixture:update_note",
@@ -227,6 +231,9 @@ describeEmbeddedPostgres("tool gateway service", () => {
       reasonCode: "approval_required",
       details: { instructions: expect.stringContaining("A human approval card was posted on task") },
     });
+
+    unsubscribe();
+    expect(notified).toHaveBeenCalledTimes(1);
 
     await expect(gateway.executeTool({
       sessionToken: session.token,

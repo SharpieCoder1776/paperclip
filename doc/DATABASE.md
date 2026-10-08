@@ -681,3 +681,18 @@ and are atomically deleted before code exchange. The `code_verifier` column hold
 this non-secret binding for this namespace; Slack bot installation does not use
 PKCE. Removal and manual recovery invalidate outstanding attempts under the same
 credential-mutation lease used by configuration.
+
+
+## Durable work notifications
+
+`createDb` supports process-local `signalDatabaseWork` and
+`subscribeDatabaseWork` hints for delivery queues. Signal inside the transaction
+before its durable write; nested signals publish only after the outermost
+transaction settles. For an autocommit write, signal after success, and signal
+with `uncertainCommit: true` (the third argument) if its acknowledgement fails.
+Consumers subscribe before an initial durable reconciliation. They must retain
+retries while work or an uncertain commit is outstanding and release their
+subscription on shutdown. A signal is a hint, not a persisted queue or a
+cross-process notification. Every supported producer must use the same
+`createDb` instance (or one of its transactions) as its consumer. See the
+[delivery migration scope](plans/2026-10-08-instance-sleep-and-scheduler-inventory.md#first-implementation-five-delivery-queues).

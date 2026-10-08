@@ -1,3 +1,5 @@
+import { signalDatabaseWork } from "@paperclipai/db";
+import { DELIVERY_QUEUES } from "./delivery-queue-worker.js";
 import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import { agents, agentWakeupRequests, chatCompletionDeliveries as deliveries, chatTaskHandoffs as handoffs,
   heartbeatRuns, issueComments, issueDocuments, issues, type Db } from "@paperclipai/db";
@@ -33,6 +35,7 @@ export async function recordChatHandoff(tx: Connection, task: Issue, actorRunId:
 /** Must run on the same transaction as status projection (including native arbitration). */
 export async function recordChatCompletion(tx: Connection, before: Issue, after: Issue) {
   if (before.status === after.status) return;
+  signalDatabaseWork(tx, DELIVERY_QUEUES.chatCompletion);
   await tx.update(deliveries).set({ status: "superseded" }).where(and(eq(deliveries.taskId, after.id),
     eq(deliveries.companyId, after.companyId), inArray(deliveries.status, [...pending])));
   if (after.status !== "done") return;
@@ -243,5 +246,9 @@ export function chatCompletionDeliveryService(db: Db, heartbeat: { wakeup(agentI
       .orderBy(asc(deliveries.nextAttemptAt)).limit(100);
     for (const row of due) await deliver(row.id);
   }
-  return { deliver, sweepPending };
+  async function hasPending() {
+    return (await db.select({ id: deliveries.id }).from(deliveries)
+      .where(inArray(deliveries.status, [...pending])).limit(1)).length > 0;
+  }
+  return { deliver, sweepPending, hasPending };
 }

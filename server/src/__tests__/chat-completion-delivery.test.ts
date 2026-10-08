@@ -1,3 +1,4 @@
+import { createDeliveryQueueWorker, DELIVERY_QUEUES } from "../services/delivery-queue-worker.js";
 import { randomUUID } from "node:crypto";
 import { and, asc, eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +52,34 @@ const support = await getEmbeddedPostgresTestSupport();
     };
     return { companyId, agentId, sourceId, runId, task, create, finish, rows, due, wakeup, service, run };
   }
+  it("dispatches a committed completion without activity publication and recovers after restart", async () => {
+    const f = await seed();
+    const run = vi.fn(() => f.service.sweepPending());
+    const makeWorker = () => createDeliveryQueueWorker({
+      db, topic: DELIVERY_QUEUES.chatCompletion, retryMs: 60_000,
+      run, hasPending: f.service.hasPending, canRun: () => true,
+      onError: error => { throw error; },
+    });
+    const worker = makeWorker();
+    try {
+      await worker.ready;
+      expect(await f.service.hasPending()).toBe(false);
+      expect(run).toHaveBeenCalledTimes(1);
+      await f.finish(); // Service mutation alone: no route activity callback.
+      await vi.waitFor(() => expect(f.wakeup).toHaveBeenCalledTimes(1));
+      expect(await f.service.hasPending()).toBe(true); // queued receipt still owed
+    } finally { await worker.stop(); }
+    // Admit the first reporting turn; later completions need a new turn.
+    await f.run();
+    // A second task commits while no consumer is registered.
+    const next = await f.create();
+    await f.finish(next.id);
+    const restarted = makeWorker();
+    try {
+      await restarted.ready;
+      expect(f.wakeup).toHaveBeenCalledTimes(2);
+    } finally { await restarted.stop(); }
+  });
   it("records authenticated origins and atomically creates one event per Done transition", async () => {
     const f = await seed();
     expect(await db.select().from(handoffs).where(eq(handoffs.taskId, f.task.id))).toMatchObject([{ conversationId: f.sourceId, sessionGeneration: 0 }]);

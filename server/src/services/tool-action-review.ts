@@ -1,3 +1,5 @@
+import { signalDatabaseWork } from "@paperclipai/db";
+import { DELIVERY_QUEUES } from "./delivery-queue-worker.js";
 import { and, eq } from "drizzle-orm";
 import {
   issues,
@@ -206,6 +208,7 @@ export async function commitToolActionReview(
               : { version: 1, outcome: "rejected", reason: input.reason },
         })
         .where(eq(issueThreadInteractions.id, interaction.id));
+      signalDatabaseWork(tx, DELIVERY_QUEUES.toolAction);
       await tx
         .insert(toolActionDeliveries)
         .values({
