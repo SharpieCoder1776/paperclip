@@ -3,17 +3,21 @@ patches/*.patch whitespace=-space-before-tab
 # --- Line endings ---------------------------------------------------------
 # Git for Windows sets core.autocrlf=true system-wide, so a Windows checkout
 # materialises text files with CRLF while the repo stores LF. That matters
-# because several generators hash RAW file bytes:
+# because generators hash RAW file bytes and compare them against COMMITTED
+# values:
 #
-#   generate-protocol-manifest.mjs:  sha256(await readFile(path, "utf8"))
+#   generate-protocol-manifest.mjs    sha256(await readFile(path, "utf8"))
+#        -> packages/paperclip-runner/protocol/manifest.json
+#   teams-catalog/src/catalog-builder.ts   sha256(readFileSync(path)) + sizeBytes
+#        -> packages/teams-catalog/generated/catalog.json
 #
-# so the same sources produce different manifest hashes per platform, and a
-# manifest regenerated on Windows fails check:protocol-manifest in CI. Pin LF
-# so the working tree matches the content it is hashed against.
+# so the same sources produce different hashes per platform, and a Windows
+# checkout fails check:protocol-manifest and shipped-catalog.test.ts. Pin LF so
+# the working tree matches the content it is hashed against.
 #
 # Extensions are listed explicitly (rather than `* text=auto`) so this stays
-# line-ending-neutral: no existing file's stored content changes. `.md` is
-# deliberately omitted because adapter-plugin.md is stored with CRLF.
+# line-ending-neutral: every extension below is stored LF in the index, so no
+# existing file's stored content changes.
 
 *.sh   text eol=lf
 *.json text eol=lf
@@ -27,3 +31,23 @@ patches/*.patch whitespace=-space-before-tab
 *.toml text eol=lf
 *.css  text eol=lf
 *.html text eol=lf
+
+# teams-catalog records a sha256 + sizeBytes for every agent and task .md, so
+# those are hashed too. The rest are pinned for consistency with WSL, which has
+# no core.autocrlf and therefore reports a CRLF working tree as dirty.
+*.md            text eol=lf
+*.cjs           text eol=lf
+*.mts           text eol=lf
+*.py            text eol=lf
+*.go            text eol=lf
+*.sql           text eol=lf
+*.svg           text eol=lf
+*.txt           text eol=lf
+*.patch         text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+
+# Carve-out: upstream stores this one file with CRLF. `-text` keeps its blob
+# byte-identical, so pinning `*.md` above never rewrites a committed file and
+# the fork does not diverge from upstream on line endings.
+adapter-plugin.md -text -eol
