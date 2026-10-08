@@ -17,6 +17,7 @@ import {
   agentWakeupRequests,
   chatConversations,
   chatActions,
+  chatDeliveries,
   chatEndpoints,
   chatMessageLinks,
   chatPublications,
@@ -189,6 +190,54 @@ describe("durable inbound chat scheduler receipts", () => {
       wake,
     };
   }
+
+  it.each(["unmentioned", "mentioned", "coalesced"])("checks Slack mentions after a real heartbeat queue wait (%s)", async (scenario) => {
+    const mentioned = scenario !== "unmentioned";
+    const allowed = scenario === "mentioned";
+    const f = await fixture();
+    await db.update(agents).set({ adapterType: "durable_chat_retry_test" }).where(eq(agents.id, f.agentId));
+    const applicationId = randomUUID(), connectionId = randomUUID(), endpointId = randomUUID();
+    await db.insert(toolApplications).values({ id: applicationId, companyId: f.companyId, name: "Mention gate", type: "chat" });
+    await db.insert(toolConnections).values({ id: connectionId, companyId: f.companyId, applicationId,
+      name: "Mention gate", uid: randomUUID(), connectionPurpose: "channel", transport: "chat_sdk", status: "active" });
+    await db.insert(chatEndpoints).values({ id: endpointId, companyId: f.companyId, connectionId,
+      provider: "slack", publicId: randomUUID(), assignedAgentId: f.agentId, status: "active" });
+    const request = f.request();
+    await db.insert(issueComments).values({ id: request.commentId, companyId: f.companyId, issueId: f.issueId,
+      authorUserId: "board-user", body: mentioned ? "@bot work" : "Work" });
+    const [delivery] = await db.insert(chatDeliveries).values({ companyId: f.companyId, endpointId,
+      providerEventId: randomUUID(), deduplicationKey: randomUUID(), eventKind: "direct_message", state: "processed",
+      normalizedEvent: { trigger: "direct_message", message: { mentionedBot: mentioned } } }).returning();
+    await db.insert(chatActions).values({ id: request.id, companyId: f.companyId, endpointId,
+      deliveryId: delivery.id, kind: "inbound_wakeup", providerActionId: randomUUID(), status: "processed",
+      payload: { issueId: f.issueId, commentId: request.commentId } });
+    await f.wake(request);
+    const [receipt] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, request.id));
+    expect(receipt.status).toBe("queued");
+    if (scenario === "coalesced") {
+      const second = f.request();
+      await db.insert(issueComments).values({ id: second.commentId, companyId: f.companyId, issueId: f.issueId,
+        authorUserId: "board-user", body: "Unmentioned follow-up" });
+      const [secondDelivery] = await db.insert(chatDeliveries).values({ companyId: f.companyId, endpointId,
+        providerEventId: randomUUID(), deduplicationKey: randomUUID(), eventKind: "direct_message", state: "processed",
+        normalizedEvent: { trigger: "direct_message", message: { mentionedBot: false } } }).returning();
+      await db.insert(chatActions).values({ id: second.id, companyId: f.companyId, endpointId,
+        deliveryId: secondDelivery.id, kind: "inbound_wakeup", providerActionId: randomUUID(), status: "processed",
+        payload: { issueId: f.issueId, commentId: second.commentId } });
+      await db.update(issues).set({ executionRunId: receipt.runId, executionAgentNameKey: "maya", executionLockedAt: new Date() })
+        .where(eq(issues.id, f.issueId));
+      await f.wake(second);
+      const [coalesced] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, second.id));
+      expect(coalesced).toMatchObject({ status: "coalesced", runId: receipt.runId });
+    }
+    await db.update(chatEndpoints).set({ requireAtMention: true }).where(eq(chatEndpoints.id, endpointId));
+    await f.heartbeat.cancelRun(f.activeRunId, "Fixture slot released", { suppressImmediateRecovery: true });
+    await f.heartbeat.drainActiveRunExecutions();
+    const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, receipt.runId!));
+    expect(run.status).toBe(allowed ? "succeeded" : "cancelled");
+    expect(execute).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    if (!allowed) expect(run.errorCode).toBe("chat_mention_required");
+  });
 
   async function executionHold(f: { companyId: string; issueId: string; agentId: string }) {
     const [action] = await db.insert(issueRecoveryActions).values({

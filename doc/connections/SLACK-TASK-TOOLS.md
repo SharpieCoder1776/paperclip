@@ -206,4 +206,7 @@ When enabled, each inbound message must explicitly @mention the connected bot,
 including replies in existing channel threads and direct messages. DMs must also
 be enabled with **Allow direct messages**. Unmentioned messages do not create
 or continue a task. Queued messages are checked again before starting agent work.
-This setting does not cancel work that has already started.
+If a queued run combines several messages, an unmentioned input cancels that
+queued run when this setting is enabled. Send a new mention to start it again.
+This setting does not cancel work that has already started or revoke its Slack
+tool access.

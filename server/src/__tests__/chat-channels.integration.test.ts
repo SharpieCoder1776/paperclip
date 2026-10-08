@@ -5277,6 +5277,27 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.shutdown();
   });
 
+  it("preserves running Slack tool authority after Require at-mention is enabled", async () => {
+    await instanceSettingsService(db).updateExperimental({ enableChatConnectors: true });
+    const { resolveSlackTaskAuthority } = await import("../services/connectors/slack-authority.js");
+    const fixture = await seedCompany();
+    const { callbacks, endpoint, service } = await configuredSlackEndpoint(fixture, { linkedBoardUser: true, allowUnlinkedPeople: false });
+    const thread = makeThread({ channelId: "D-RUNNING", id: "slack:D-RUNNING:7400.1", isDM: true });
+    await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
+      message: makeMessage({ id: "7400.1", text: "Read this conversation", userId: "UBOARD" }), trigger: "direct_message" });
+    const [conversation] = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, endpoint.id));
+    const [action] = await db.select().from(chatActions).where(and(eq(chatActions.endpointId, endpoint.id), eq(chatActions.kind, "inbound_wakeup")));
+    const runId = randomUUID();
+    await db.insert(heartbeatRuns).values({ id: runId, companyId: fixture.companyId, agentId: fixture.assignedAgentId,
+      status: "running", invocationSource: "assignment", responsibleUserId: "owner-user", contextSnapshot: { issueId: conversation.issueId } });
+    await initializeRunIdentity(db, { companyId: fixture.companyId, runId, issueId: conversation.issueId,
+      responsibleUserId: "owner-user", messageIds: [String(action.payload.commentId)], cause: "instruction" });
+    const binding = { companyId: fixture.companyId, agentId: fixture.assignedAgentId, runId, issueId: conversation.issueId };
+    await expect(resolveSlackTaskAuthority(db, binding)).resolves.toMatchObject({ slackUserId: "UBOARD" });
+    await service.update(endpoint.id, { requireAtMention: true });
+    await expect(resolveSlackTaskAuthority(db, binding)).resolves.toMatchObject({ slackUserId: "UBOARD" });
+  });
+
   it.each([false, true])("requires Slack at-mentions for every message when enabled (DM=%s)", async (isDM) => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture);

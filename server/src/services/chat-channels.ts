@@ -11554,14 +11554,6 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       ]))
     )
       throw deny();
-    // Recheck the current policy when a queued message is about to wake work.
-    if (
-      endpoint.provider === "slack" &&
-      endpoint.requireAtMention &&
-      delivery.normalizedEvent.trigger !== "mention" &&
-      (delivery.normalizedEvent.message as { mentionedBot?: boolean } | undefined)?.mentionedBot !== true
-    )
-      throw deny();
     const conversation = await tx
       .select()
       .from(chatConversations)
@@ -14102,6 +14094,24 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       );
   }
 
+  async function authorizeInboundWorkStart(
+    tx: DbOrTransaction,
+    action: typeof chatActions.$inferSelect,
+  ) {
+    const current = await authorizeInboundWakeup(tx, action);
+    if (
+      current.endpoint.provider === "slack" &&
+      current.endpoint.requireAtMention &&
+      current.delivery.normalizedEvent.trigger !== "mention" &&
+      (current.delivery.normalizedEvent.message as { mentionedBot?: boolean } | undefined)?.mentionedBot !== true
+    ) {
+      throw forbidden("Message did not @mention the bot", {
+        code: "chat_action_authorization_changed",
+      });
+    }
+    return current;
+  }
+
   async function processInboundWakeup(deliveryId: string): Promise<boolean> {
     const now = new Date();
     const candidate = await db
@@ -14216,7 +14226,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         requestedByActorId: String(claimed.payload.requestedByActorId),
         requestedAt: claimed.createdAt,
         authorize: async (tx) => {
-          const current = await authorizeInboundWakeup(tx, claimed);
+          const current = await authorizeInboundWorkStart(tx, claimed);
           if (current.delivery.state !== "processed")
             throw new Error("chat_inbound_wakeup_acceptance_not_committed");
         },
@@ -14235,7 +14245,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         return true;
       }
       const context = await db.transaction((tx) =>
-        authorizeInboundWakeup(tx, claimed),
+        authorizeInboundWorkStart(tx, claimed),
       );
       if (context.delivery.state !== "processed")
         throw new Error("chat_inbound_wakeup_acceptance_not_committed");

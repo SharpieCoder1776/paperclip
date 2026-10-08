@@ -248,6 +248,7 @@ import {
   initializeRunIdentity,
 } from "./run-identity.js";
 import {
+  slackMentionAllowsRunStart,
   assertDurableChatWakeupReceipt,
   assertDurableChatWakeupRequest,
   authorizeFailedChatRunRetryWake,
@@ -13584,6 +13585,16 @@ export function heartbeatService(
         return;
       }
       run = claimed;
+    }
+
+    // Admission can precede execution by a full queue wait. Use durable wake
+    // receipts (including coalesced input), not the old admission-time policy.
+    if (!(await slackMentionAllowsRunStart(db, run))) {
+      await cancelRunInternal(run.id, "Message did not @mention the bot", {
+        errorCode: "chat_mention_required",
+        suppressImmediateRecovery: true,
+      });
+      return;
     }
 
     const instructionCleanupRun = run;
