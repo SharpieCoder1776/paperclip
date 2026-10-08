@@ -20,6 +20,8 @@ accepts the caller's explicit native model; no allowlist, hardcoded default or
 fallback is added. Pi profile 19 has command digest
 `sha256:b7647ebf97f802ca053ec3384c912bf0e8d18eba308d27397bb1d95a37220825`.
 
+The merge onto newer master uses Pi profile 20 (`sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e`). Its declaration differs from profile 19 only in the revision and the shared sandbox source hash: master adds configured task environment keys in the Codex-only branch. Pi runtime, wrapper, extension, closures, model configuration, credential environment and recovery identity hashes are unchanged. The seven live results above remain evidence for their original profile 19 source; profile 20 integration is verified by current-head tests and CI.
+
 | Core path | Canonical campaign | Retained evidence |
 | --- | --- | --- |
 | Four typed questions, browser reconnects and exact saved answers | `pi-core19-0-1791477277` | 42 files; SHA256 `5c0c5fdfeca97b689a0f299935fd5cb62d65c38a056b8ff4f2dfc888cd795b24` |
@@ -108,6 +110,8 @@ harness `ee3b094d35719e4dd7cbc791d1924205c4fa474f` and immutable image
 `sha256:ce622e03c606cb93eedda824133b791449f7be752d85e220a2e316f825f37226`.
 Their canonical results and independent cleanup pass; their host stops normally.
 They do not substitute for the seven fresh profile-19 results above.
+
+The merge onto newer master uses Pi profile 20 (`sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e`). Its declaration differs from profile 19 only in the revision and the shared sandbox source hash: master adds configured task environment keys in the Codex-only branch. Pi runtime, wrapper, extension, closures, model configuration, credential environment and recovery identity hashes are unchanged. The seven live results above remain evidence for their original profile 19 source; profile 20 integration is verified by current-head tests and CI.
 
 | Core path | Canonical campaign | Retained evidence |
 | --- | --- | --- |

@@ -73,7 +73,7 @@ describe("eval-session request contract", () => {
     const value = request({ provider: "acpx", acpxAgent: agent, model: "explicit-provider-model" });
     expect(() => parseEvalSessionRequest(value)).toThrow("--candidate-profile");
     expect(parseEvalSessionRequest(value, { candidateProfile: agent })).toMatchObject({ acpxAgent: agent, model: "explicit-provider-model" });
-    expect(() => parseEvalSessionRequest(value, { candidateProfile: "pi" })).toThrow("must match");
+    expect(() => parseEvalSessionRequest(value, { candidateProfile: agent === "pi" ? "cursor" : "pi" })).toThrow("must match");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, model: "" }), { candidateProfile: agent })).toThrow("request.model");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: "codex", session: { acpxAgent: agent } }))).toThrow("session.acpxAgent must match");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, candidateProfile: agent }))).toThrow("--candidate-profile");
@@ -225,12 +225,11 @@ describe("eval-session request contract", () => {
     })))).toBe("17");
   });
 
-  it("accepts Pi and both qualified remote provider profiles", () => {
-    expect(parseEvalSessionRequest(request({
+  it("requires explicit Pi diagnosis and accepts both qualified remote provider profiles", () => {
+    expect(() => parseEvalSessionRequest(request({
       provider: "acpx",
       acpxAgent: "pi",
-      model: "openrouter/deepseek/deepseek-v4-flash-0731",
-    }))).toMatchObject({ provider: "acpx", acpxAgent: "pi" });
+    }))).toThrow("--candidate-profile");
     expect(parseEvalSessionRequest(request({
       provider: "aws_agentcore",
       driver: "aws_agentcore_harness_api",

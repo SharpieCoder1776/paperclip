@@ -47,6 +47,11 @@ import type {
 export type { IssueWorkMode };
 
 export type IssueVisibility = "open" | "private";
+/** Management hints for this task; never includes protected project/parent identity. */
+export interface IssuePrivacyConstraints {
+  publicBlockedBy: "parent" | "project" | null;
+  leavesPersonalProject: boolean;
+}
 export type IssueAccessGrantSubjectType = "user" | "agent";
 export type IssueAccessGrantSource = "explicit" | "assignment" | "project" | "owner";
 export type IssueAccessGrantAgentVisibility = "discoverable" | "private";
@@ -640,6 +645,7 @@ export interface IssueScheduledRetry {
 export type IssueRetryNowOutcome =
   | "promoted"
   | "already_promoted"
+  | "waiting"
   | "no_scheduled_retry"
   | "gate_suppressed";
 

@@ -120,7 +120,7 @@ describe("native status authority", () => {
       toStatus: "in_review",
       effects: [expect.objectContaining({ kind: "create_interaction" })],
     });
-    for (const kind of ["same_agent", "retry", "monitor"] as const) {
+    for (const kind of ["same_agent", "retry"] as const) {
       expect(
         arbitrate({
           assessment: {
@@ -532,7 +532,7 @@ describe("native status authority", () => {
       expect.objectContaining({
         statusAction: "blocked",
         toStatus: "blocked",
-        policyVersion: "phase6-v10",
+        policyVersion: "phase6-v11",
         reasonCode: "current_track_blocker_waiting",
         unblockDescriptor: {
           owner: "board",

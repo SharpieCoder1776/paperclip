@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { createRoot } from "react-dom/client";
 import { act } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { beforeAll, describe, expect, it } from "vitest";
@@ -15,7 +16,7 @@ async function renderMarkup(node: ReactNode, expand?: string, inspect?: (contain
   const container = document.createElement("div");
   document.body.appendChild(container);
   const root = createRoot(container);
-  await act(async () => root.render(node));
+  await act(async () => root.render(<QueryClientProvider client={new QueryClient()}>{node}</QueryClientProvider>));
   if (expand) await act(async () => {
     container.querySelector(`[aria-label="${expand}"]`)?.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
   });
@@ -40,6 +41,7 @@ async function renderRunner(config: Record<string, unknown>, expand?: string, in
         mark={() => undefined}
         models={[]}
         hideInstructionsFile
+        openAiDotEnabled={openAiDotEnabled}
       />
     </TooltipProvider>,
     expand, inspect,
@@ -47,6 +49,13 @@ async function renderRunner(config: Record<string, unknown>, expand?: string, in
 }
 
 describe("Paperclip Runner Codex configuration", () => {
+  it("keeps Dot out of the general harness picker and hides that picker for Dot", async () => {
+    expect(await renderRunner({ provider: "codex" }, "Harness", true)).not.toContain("OpenAI Dot");
+    const dot = await renderRunner({ provider: "openai_dot" });
+    expect(dot).not.toContain('aria-label="Harness"');
+    expect(dot).toContain("Dot connection");
+    expect(dot).toContain("Allow externally billed provider");
+  });
   it.each([
     [undefined, "Full auto (approve all)"],
     ["approve-paperclip", "Automatic Paperclip actions"],

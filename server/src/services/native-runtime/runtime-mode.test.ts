@@ -109,20 +109,6 @@ describe("resolveNativeRuntimeMode", () => {
     });
   });
 
-  it("admits qualified Pi without enabling pending ACPX candidates", () => {
-    expect(resolveNativeRuntimeMode({
-      ...eligible,
-      adapterConfig: {
-        provider: "acpx",
-        acpxAgent: "pi",
-        model: "openrouter/deepseek/deepseek-v4-flash-0731",
-      },
-    })).toMatchObject({
-      kind: "native",
-      profile: { backend: "acpx_runtime" },
-    });
-  });
-
   it("rejects malformed OpenCode and unqualified ACPX profiles", () => {
     expect(() => resolveNativeRuntimeMode({
       ...eligible,

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   assertAgentCoreProfileRecoveryBinding,
@@ -8,28 +8,28 @@ import {
 } from "./native-runtime/provider-profile.js";
 
 describe("Paperclip Runner native provider configuration", () => {
-  afterEach(() => vi.unstubAllEnvs());
-
-  it.each([undefined, "agent", "plan", "ask"])("passes qualified Cursor mode %s without a model roster", acpxSessionMode => {
-    const adapterConfig = { provider: "acpx", acpxAgent: "cursor", model: "exact-cursor-model", acpxSessionMode };
-    vi.stubEnv("PAPERCLIP_RUNNER_ACPX_QUALIFICATION", "");
-    expect(resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime", adapterConfig })).toMatchObject({ acpxAgent: "cursor", model: "exact-cursor-model" });
-    vi.stubEnv("PAPERCLIP_RUNNER_ACPX_QUALIFICATION", JSON.stringify([{ agent: "cursor", model: "exact-cursor-model" }]));
-    expect(resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime", adapterConfig })).toMatchObject({
-      provider: "acpx", acpxAgent: "cursor", model: "exact-cursor-model", acpxSessionMode: acpxSessionMode ?? "agent", acpxPermissionMode: "approve-all",
+  it.each([
+    ["gpt-6.1-sol", "0.158.0", "gpt-6-sol"],
+    ["gpt-6.1-sol", "0.156.0", "gpt-5.6-sol"],
+    ["gpt-6-luna", "0.156.0", "gpt-5.6-luna"],
+  ])("recovers %s on Codex %s with compatible model %s", (model, codexCliVersion, expectedModel) => {
+    const input = {
+      backend: "codex_app_server" as const,
+      adapterConfig: { provider: "codex", model, modelReasoningEffort: "high", codexPermissionMode: "never" },
+      codexCliVersion,
+    };
+    expect(resolvePaperclipRunnerNativeProviderInput(input)).toEqual({
+      provider: "codex", model: expectedModel, codexApprovalPolicy: "never", codexReasoningEffort: "high",
     });
+    expect(input.adapterConfig.model).toBe(model);
   });
 
   it.each([
-    { provider: "acpx", acpxAgent: "cursor", acpxSessionMode: "auto" },
-    { provider: "acpx", acpxAgent: "cursor", acpxSessionMode: null },
-    { provider: "acpx", acpxAgent: "copilot", acpxSessionMode: "plan" },
-    { provider: "codex", acpxSessionMode: "plan" },
-  ])("rejects invalid or foreign mode before provider admission: %j", adapterConfig => {
-    expect(() => resolvePaperclipRunnerNativeProviderInput({ backend: "acpx_runtime", adapterConfig }))
-      .toThrowError(expect.objectContaining({ code: "paperclip_runner_mode_invalid" }));
+    ["gpt-6.1-sol", "0.159.0"], ["gpt-6-sol", "0.157.0"], ["gpt-5.6-sol", "0.156.0"],
+  ])("keeps a supported %s selection on Codex %s", (model, codexCliVersion) => {
+    expect(resolvePaperclipRunnerNativeProviderInput({ backend: "codex_app_server",
+      adapterConfig: { provider: "codex", model }, codexCliVersion })).toMatchObject({ model });
   });
-
   it.each([undefined, "approve-all", "approve-paperclip", "approve-reads", "deny-all"])(
     "passes Grok's full-auto default or explicit %s policy to the native runner",
     (acpxPermissionMode) => {
