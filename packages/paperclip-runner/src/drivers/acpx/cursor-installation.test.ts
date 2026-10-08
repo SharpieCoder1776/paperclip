@@ -1,16 +1,19 @@
 import { readFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { CURSOR_PINNED_VERSION, cursorNativeDistributionSpec, verifyCursorInstallation } from "./cursor-installation.js";
-import { QUALIFIED_ACPX_PROFILES } from "./qualified-profiles.js";
+import { QUALIFIED_ACPX_PROFILES, type QualifiedAcpxProfile } from "./qualified-profiles.js";
+import { cursorRuntimeCachePath } from "./cursor-runtime-cache.js";
 
-it("matches build materializer pins and launches only package-owned complete distributions", async () => {
+it("matches build materializer pins for packaged and user-installed distributions", async () => {
   const manifest = JSON.parse(await readFile(new URL("../../../cursor-distributions.json", import.meta.url), "utf8"));
   expect(manifest.version).toBe(CURSOR_PINNED_VERSION);
   for (const [platform, architecture] of [["darwin", "arm64"], ["darwin", "x64"], ["linux", "x64"]] as const) {
     const spec = cursorNativeDistributionSpec(platform, architecture);
     expect(spec.expectedClosureSha256).toBe(manifest.platforms[`${platform}-${architecture}`].closureSha256);
-    expect(spec.distributionRoot).toBe(new URL(`../../../provider-assets/cursor/${platform}-${architecture}`, import.meta.url).pathname);
+    const packaged = new URL(`../../../provider-assets/cursor/${platform}-${architecture}`, import.meta.url).pathname;
+    expect(spec.distributionRoot).toBe(existsSync(packaged) ? packaged : cursorRuntimeCachePath(spec.expectedClosureSha256, platform, architecture));
     expect(spec.manifestPath).toBe(join(spec.distributionRoot, ".paperclip-cursor-closure.json"));
     expect(spec.executable).toBe("node");
     expect(spec.entrypoint).toBe("index.js");
@@ -23,7 +26,7 @@ it("matches build materializer pins and launches only package-owned complete dis
 it("rejects profile substitutions before reading any native distribution", async () => {
   const base = { ...QUALIFIED_ACPX_PROFILES.cursor, qualificationModel: "explicit", reportedModelId: "explicit" };
   for (const profile of [QUALIFIED_ACPX_PROFILES.cursor, { ...base, agentServerVersion: "latest" }, { ...base, commandDigest: "forged" }, { ...base, reportedModelId: "different" }, { ...base, agentProfileVersion: 7 as const }, { ...base, agentProfileVersion: 8 as const }, { ...base, agentProfileVersion: 9 as const }]) {
-    await expect(verifyCursorInstallation(profile)).rejects.toThrow("exact pinned profile");
+    await expect(verifyCursorInstallation(profile as QualifiedAcpxProfile)).rejects.toThrow("exact pinned profile");
   }
 });
 

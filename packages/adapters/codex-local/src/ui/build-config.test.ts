@@ -94,7 +94,7 @@ describe("buildCodexLocalConfig", () => {
     });
   });
 
-  it.each([["gpt-6-astra", "ultra"], ["gpt-6-sol", "ultra"], ["gpt-6-luna", "max"], ["gpt-5.6-sol", "ultra"], ["gpt-5.6-terra", "ultra"], ["gpt-5.6-luna", "max"]])("persists the exact %s model and supported controls", (model, effort) => {
+  it.each([["gpt-6-astra", "ultra"], ["gpt-6.1-sol", "ultra"], ["gpt-6-sol", "ultra"], ["gpt-6-luna", "max"], ["gpt-5.6-sol", "ultra"], ["gpt-5.6-terra", "ultra"], ["gpt-5.6-luna", "max"]])("persists the exact %s model and supported controls", (model, effort) => {
     const config = buildCodexLocalConfig(
       makeValues({
         model,
@@ -118,6 +118,11 @@ describe("buildCodexLocalConfig", () => {
 });
 
 describe("buildPaperclipRunnerConfig", () => {
+  it.each([undefined, false, true])("preserves Dot attachment consent in create/import forms: %s", value => {
+    const config = buildPaperclipRunnerConfig(makeValues({ adapterType: "paperclip_runner", adapterSchemaValues: { provider: "openai_dot", dotAttachmentAccess: value } }));
+    expect(config.dotAttachmentAccess).toBe(value === true);
+    expect(config.dotWorkspaceAccess).toBe(false);
+  });
   it("keeps only settings implemented by the Codex runner profile", () => {
     const config = buildPaperclipRunnerConfig(makeValues({
       codexEngine: "acp",
@@ -226,32 +231,31 @@ describe("buildPaperclipRunnerConfig", () => {
     expect(config).not.toHaveProperty("acpxAgent");
   });
 
-  it.each(["cursor", "copilot", "pi"])("requires an explicit %s model without substituting Claude", acpxAgent => {
+  it.each(["pi", "copilot"])("rejects unavailable ACPX %s without selecting another provider", (acpxAgent) => {
     expect(() => buildPaperclipRunnerConfig(makeValues({
-      model: "", adapterSchemaValues: { provider: "acpx", acpxAgent },
-    }))).toThrow("requires an explicit provider model");
-    const model = acpxAgent === "pi" ? "openrouter/deepseek/deepseek-v4-flash-0731" : "exact-provider-model";
+      adapterType: "paperclip_runner",
+      model: "explicit-provider-model",
+      adapterSchemaValues: {
+        provider: "acpx",
+        acpxAgent,
+      },
+    }))).toThrow(/is not enabled for production/);
+  });
+
+  it.each(["agent", "plan", "ask"])("preserves Cursor's explicit model and %s mode", (mode) => {
     expect(buildPaperclipRunnerConfig(makeValues({
-      model, adapterSchemaValues: { provider: "acpx", acpxAgent },
-    }))).toMatchObject({ provider: "acpx", acpxAgent, model });
+      model: "explicit-cursor-model",
+      adapterSchemaValues: { provider: "acpx", acpxAgent: "cursor", acpxSessionMode: mode },
+    }))).toMatchObject({ provider: "acpx", acpxAgent: "cursor", model: "explicit-cursor-model", acpxSessionMode: mode });
   });
 
-  it("rejects a different model when Pi is selected", () => {
-    expect(() => buildPaperclipRunnerConfig(makeValues({
-      model: "claude-sonnet-5", adapterSchemaValues: { provider: "acpx", acpxAgent: "pi" },
-    }))).toThrow("Pi requires exact model");
-  });
-
-  it.each([undefined, "agent", "plan", "ask"])("preserves Cursor session mode %s for server admission", acpxSessionMode => {
+  it("defaults Cursor to Agent and requires an explicit model", () => {
     expect(buildPaperclipRunnerConfig(makeValues({
-      model: "exact-cursor-model", adapterSchemaValues: { provider: "acpx", acpxAgent: "cursor", acpxSessionMode },
-    }))).toMatchObject({ provider: "acpx", acpxAgent: "cursor", acpxSessionMode: acpxSessionMode ?? "agent" });
-  });
-
-  it("rejects a Cursor mode accidentally retained on another provider", () => {
+      model: "explicit-cursor-model", adapterSchemaValues: { provider: "acpx", acpxAgent: "cursor" },
+    }))).toMatchObject({ acpxAgent: "cursor", acpxSessionMode: "agent", model: "explicit-cursor-model" });
     expect(() => buildPaperclipRunnerConfig(makeValues({
-      model: "exact-copilot-model", adapterSchemaValues: { provider: "acpx", acpxAgent: "copilot", acpxSessionMode: "plan" },
-    }))).toThrow("only for Cursor");
+      model: "", adapterSchemaValues: { provider: "acpx", acpxAgent: "cursor" },
+    }))).toThrow("cursor requires an explicit provider model");
   });
 
   it("builds a Claude Managed profile reference with explicit retention and spend controls", () => {

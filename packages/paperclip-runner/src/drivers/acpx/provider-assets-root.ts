@@ -29,12 +29,25 @@ export function resolveRunnerProviderAssetsRoot(moduleUrl: string, provider: Nat
     if (!inside(packageRoot, canonicalManifest)) throw new Error("Runner provider manifest escapes its bound package root");
     // The authority comes from runnerd's selected provider pack, never provider
     // environment. Verify the selected manifest itself before deriving assets.
-    const value = readPackageManifest(manifest, canonicalManifest);
-    if (value.name === SERVER_PACKAGE_NAME) {
-      if (canonicalManifest !== join(packageRoot, "package.json")) throw new Error("Runner server manifest is outside its package root");
-      assertServerVendorLayout(packageRoot);
-    } else if (value.name !== RUNNER_PACKAGE_NAME) throw new Error("Runner provider manifest does not name the runner package");
-    packageRoot = dirname(canonicalManifest);
+    const fd = openSync(manifest, constants.O_RDONLY | constants.O_NOFOLLOW);
+    try {
+      const before = fstatSync(fd, { bigint: true });
+      if (!before.isFile() || before.size < 1n || before.size > 64n * 1024n) throw new Error("Runner provider manifest is not a bounded regular file");
+      const bytes = readFileSync(fd);
+      const after = fstatSync(fd, { bigint: true });
+      if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
+        || bytes.length !== Number(before.size) || realpathSync(manifest) !== canonicalManifest) throw new Error("Runner provider manifest changed during admission");
+      const value = JSON.parse(bytes.toString("utf8")) as { name?: unknown };
+      if (value?.name === "@paperclipai/server") {
+        // runnerd derives this binding from the verified sidecar in the public
+        // server package. Images may carry assets alongside that bundle; local
+        // explicit setup uses the OS-account cache when package assets are absent.
+        packageRoot = join(dirname(canonicalManifest), "dist/vendor/paperclip-runner");
+        if (realpathSync(packageRoot) !== packageRoot) throw new Error("Vendored runner directory is not contained by its server package");
+      } else if (value?.name === RUNNER_PACKAGE_NAME) {
+        packageRoot = dirname(canonicalManifest);
+      } else throw new Error("Runner provider manifest does not name the runner or server package");
+    } finally { closeSync(fd); }
   } else {
     if (boundManifest !== undefined) throw new Error("Runner provider manifest has no bound package root");
     const url = new URL(moduleUrl);
@@ -47,6 +60,8 @@ export function resolveRunnerProviderAssetsRoot(moduleUrl: string, provider: Nat
       assertServerVendorLayout(packageRoot);
     } else if (new RegExp(`/(?:src|dist)/drivers/acpx/${provider}-installation\\.(?:ts|js)$`).test(url.pathname)) packageRoot = fileURLToPath(new URL("../../../", url));
     else if (/\/dist\/cli\/acpx-runtime-sidecar\.(?:cjs|js)$/.test(url.pathname)) packageRoot = fileURLToPath(new URL("../../", url));
+    else if (new RegExp(`/dist/vendor/paperclip-runner/drivers/acpx/${provider}-installation\\.(?:js)$`).test(url.pathname)) packageRoot = fileURLToPath(new URL("../../", url));
+    else if (/\/dist\/vendor\/paperclip-runner\/cli\/acpx-runtime-sidecar\.(?:cjs|js)$/.test(url.pathname)) packageRoot = fileURLToPath(new URL("../", url));
     else throw new Error("Provider factory is outside a verified package layout");
     packageRoot = realpathSync(packageRoot);
   }

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { expect, it } from "vitest";
-import { cursorDeniedCommand, hasCursorDeniedCommand, hasCursorCancellation, readCursorToolEvidence, type CursorToolNotice } from "./cursor-native-evidence.js";
+import { cursorDeniedCommand, hasCursorDeniedCommand, hasCursorDeniedTurnTerminal, hasCursorCancellation, readCursorToolEvidence, type CursorToolNotice } from "./cursor-native-evidence.js";
 
 export function denialNotices(path = "/fixture/denied.txt"): CursorToolNotice[] {
   const base = { runId: "run", sessionId: "session", turnId: "turn", toolCallId: "tool", operation: "execute", commandSha256: cursorDeniedCommand(path).commandSha256 };
@@ -8,7 +8,7 @@ export function denialNotices(path = "/fixture/denied.txt"): CursorToolNotice[] 
     { ...base, seq: 3, stage: "permission_delivered", requestId: "request", outcome: "reject_once" }, { ...base, seq: 4, stage: "tool", status: "failed" }];
 }
 const grade = (notices: CursorToolNotice[]) => hasCursorDeniedCommand({ notices, runId: "run", turnId: "turn", requestId: "request", toolCallId: "tool", commandSha256: cursorDeniedCommand("/fixture/denied.txt").commandSha256 });
-it("requires the exact absolute command, native request, delivered denial and failed call in order", () => {
+it("requires the exact absolute command, native request, delivered denial and settled call in order", () => {
   expect(grade(denialNotices())).toBe(true); expect(grade(denialNotices("/other/denied.txt"))).toBe(false);
   expect(grade(denialNotices().slice(1))).toBe(false); expect(grade([...denialNotices(), denialNotices()[0]!])).toBe(false);
   for (const key of ["runId", "sessionId", "turnId", "toolCallId", "commandSha256"]) {
@@ -102,4 +102,43 @@ it("allows explicit earlier remote bootstrap reads while rejecting unknown kinds
   for (const operation of [undefined, "edit", "execute"]) expect(hasCursorDeniedCommand({ ...input, bootstrapReadProof, notices: [{ ...read, operation }, ...rows] })).toBe(false);
   expect(hasCursorDeniedCommand({ ...input, bootstrapReadProof, notices: [...rows, { ...read, seq: 20 }] })).toBe(false);
   expect(hasCursorDeniedCommand({ ...input, bootstrapReadProof, notices: [{ ...read, sessionId: "other" }, ...rows] })).toBe(false);
+});
+
+it("accepts Cursor's transport-completed denial only with the exact delivered rejection", () => {
+  const rows = denialNotices(); rows[3]!.status = "completed";
+  expect(grade(rows)).toBe(true);
+  expect(grade(rows.filter(row => row.stage !== "permission_delivered"))).toBe(false);
+  for (const outcome of ["allow_once", "allow_always", "cancel"]) {
+    const changed = structuredClone(rows); changed[2]!.outcome = outcome; expect(grade(changed)).toBe(false);
+  }
+  expect(grade([...rows, { ...rows[3]!, seq: 5 }])).toBe(false);
+  expect(grade([...rows, { ...rows[0]!, seq: 5, toolCallId: "replayed-write" }])).toBe(false);
+});
+it("requires a correlated failed semantic finalization after the delivered denial, never false success", () => {
+  const evidence = { runId: "run", seq: 3, protocolSchemaVersion: 1, eventType: "provider.notice.recorded", payload: { prpEvent: {
+    schema: "paperclip.prp.event.v1", schemaVersion: 1, sourceKind: "runner", runId: "run", turnId: "turn", emittedAt: new Date(1).toISOString(), eventType: "provider.notice.recorded",
+    payload: { schema: "paperclip.provider.notice.v1", scope: "turn", category: "cursor_tool_evidence_v1", provenance: { sessionId: "session", turnId: "turn", eventType: "permission_delivered", method: "session/request_permission" },
+      details: [{ name: "stage", value: "permission_delivered" }, { name: "toolCallId", value: "tool" }, { name: "requestId", value: "request" }, { name: "outcome", value: "reject_once" }] },
+  } } };
+  const terminal = { runId: "run", seq: 5, protocolSchemaVersion: 1, eventType: "turn.completed", payload: { prpEvent: {
+    schema: "paperclip.prp.event.v1", schemaVersion: 1, sourceKind: "runner", runId: "run", turnId: "turn", emittedAt: new Date(2).toISOString(), eventType: "turn.completed", payload: { status: "completed", error: null },
+  } } };
+  const input = { runId: "run", turnId: "turn", requestId: "request", issue: { id: "issue", status: "in_progress" },
+    run: { id: "run", nativeIssueId: "issue", runtimeMode: "native", status: "failed", errorCode: "native_session_interrupted", error: "native_finalization_missing: session returned no semantic result" }, events: [evidence, terminal] };
+  expect(hasCursorDeniedTurnTerminal(input)).toBe(true);
+  const declined = { ...input, issue: { ...input.issue, status: "blocked" }, run: { ...input.run, errorCode: "native_permission_declined", error: "native_finalization_missing: session returned no semantic result; provider permission was declined; explicit direction is required" } };
+  expect(hasCursorDeniedTurnTerminal(declined)).toBe(true);
+  expect(hasCursorDeniedTurnTerminal({ ...declined, run: { ...declined.run, error: declined.run.error.replace("provider permission", "Cursor permission") } })).toBe(true);
+  expect(hasCursorDeniedTurnTerminal({ ...declined, run: { ...declined.run, error: "unrelated failure" } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...declined, issue: { ...declined.issue, status: "done" } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...declined, events: [terminal] })).toBe(false);
+  for (const status of ["succeeded", "cancelled", "timed_out", "running"]) expect(hasCursorDeniedTurnTerminal({ ...input, run: { ...input.run, status } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, issue: { ...input.issue, status: "done" } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, run: { ...input.run, errorCode: "other" } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, run: { ...input.run, nativeIssueId: "foreign" } })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, events: [terminal] })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, events: [evidence, terminal, terminal] })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, turnId: "foreign" })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, requestId: "foreign" })).toBe(false);
+  expect(hasCursorDeniedTurnTerminal({ ...input, events: [evidence, { ...terminal, seq: 2 }] })).toBe(false);
 });

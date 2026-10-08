@@ -67,21 +67,19 @@ function agentCoreProfile(overrides: Record<string, unknown> = {}) {
 }
 
 describe("eval-session request contract", () => {
-  it.each(["cursor", "copilot"] as const)("admits %s only with the matching CLI diagnostic opt-in", (agent) => {
+  it.each(["pi", "copilot"] as const)("admits %s only with the matching CLI diagnostic opt-in", (agent) => {
     const value = request({ provider: "acpx", acpxAgent: agent, model: "explicit-provider-model" });
     expect(() => parseEvalSessionRequest(value)).toThrow("--candidate-profile");
     expect(parseEvalSessionRequest(value, { candidateProfile: agent })).toMatchObject({ acpxAgent: agent, model: "explicit-provider-model" });
-    expect(() => parseEvalSessionRequest(value, { candidateProfile: "pi" })).toThrow("must match");
+    expect(() => parseEvalSessionRequest(value, { candidateProfile: agent === "pi" ? "cursor" : "pi" })).toThrow("must match");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, model: "" }), { candidateProfile: agent })).toThrow("request.model");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: "codex", session: { acpxAgent: agent } }))).toThrow("session.acpxAgent must match");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, candidateProfile: agent }))).toThrow("--candidate-profile");
   });
 
-  it("admits Pi without a diagnostic flag and retains matching historical opt-in", () => {
-    const value = request({ provider: "acpx", acpxAgent: "pi", model: "openrouter/deepseek/deepseek-v4-flash-0731" });
-    expect(parseEvalSessionRequest(value)).toMatchObject({ acpxAgent: "pi" });
-    expect(parseEvalSessionRequest(value, { candidateProfile: "pi" })).toMatchObject({ acpxAgent: "pi" });
-    expect(() => parseEvalSessionRequest(value, { candidateProfile: "cursor" })).toThrow("must match");
+  it("admits qualified Cursor without a diagnostic flag and preserves its explicit model", () => {
+    expect(parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: "cursor", model: "exact-cursor-model" })))
+      .toMatchObject({ acpxAgent: "cursor", model: "exact-cursor-model" });
   });
 
   it("accepts only known diagnostic flags and rejects ambiguous repeated arguments", () => {
@@ -100,9 +98,9 @@ describe("eval-session request contract", () => {
     expect(() => parseEvalSessionCliArgs([...args, "--expected-acpx-profile", " ".repeat(4097)])).toThrow("4096-byte bound");
   });
 
-  it.each(["pi", "cursor", "copilot"] as const)("rejects stale or incomplete %s identities before runtime construction", async (agent) => {
+  it.each(["cursor"] as const)("rejects stale or incomplete %s identities before runtime construction", async (agent) => {
     const workspace = await mkdtemp(join(tmpdir(), "paperclip-eval-profile-"));
-    const model = agent === "pi" ? "openrouter/deepseek/deepseek-v4-flash-0731" : "explicit-provider-model";
+    const model = "explicit-provider-model";
     const expected = resolveQualifiedAcpxProfile(agent, model);
     const requestPath = join(workspace, "request.json");
     const args = ["--request", requestPath, "--output", join(workspace, "output.json"), "--candidate-profile", agent];
@@ -215,12 +213,11 @@ describe("eval-session request contract", () => {
     })))).toBe("17");
   });
 
-  it("accepts Pi and both qualified remote provider profiles", () => {
-    expect(parseEvalSessionRequest(request({
+  it("requires explicit Pi diagnosis and accepts both qualified remote provider profiles", () => {
+    expect(() => parseEvalSessionRequest(request({
       provider: "acpx",
       acpxAgent: "pi",
-      model: "openrouter/deepseek/deepseek-v4-flash-0731",
-    }))).toMatchObject({ provider: "acpx", acpxAgent: "pi" });
+    }))).toThrow("--candidate-profile");
     expect(parseEvalSessionRequest(request({
       provider: "aws_agentcore",
       driver: "aws_agentcore_harness_api",

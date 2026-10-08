@@ -138,7 +138,7 @@ import { httpAdapter } from "./http/index.js";
 import {
   DEFAULT_OPENCODE_RUNNER_MODEL,
   PaperclipRunnerProviderProfileError,
-  QUALIFIED_ACPX_RUNNER_MODELS,
+  DEFAULT_ACPX_RUNNER_MODELS,
   QUALIFIED_OPENCODE_RUNNER_VERSION,
   resolvePaperclipRunnerProviderProfile,
 } from "../services/native-runtime/provider-profile.js";
@@ -268,6 +268,7 @@ const claudeLocalAdapter: ServerAdapterModule = {
   syncSkills: syncClaudeSkills,
   sessionCodec: claudeSessionCodec,
   sessionManagement: getAdapterSessionManagement("claude_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: claudeModels,
   listModels: listClaudeModels,
   refreshModels: refreshClaudeModels,
@@ -343,6 +344,7 @@ const codexLocalAdapter: ServerAdapterModule = {
   syncSkills: syncCodexSkills,
   sessionCodec: codexSessionCodec,
   sessionManagement: getAdapterSessionManagement("codex_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: codexModels,
   listModels: listCodexModels,
   refreshModels: refreshCodexModels,
@@ -403,8 +405,12 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
         }],
       };
     }
+    if (profile.provider === "openai_dot") {
+      return { adapterType: "paperclip_runner", status: "warn" as const, testedAt: new Date().toISOString(),
+        checks: [{ code: "dot_event_test_required", level: "warn" as const, message: "Dot manages its model and billing. Validate the dedicated agent binding and event round trip in Paperclip; this read-only check does not wake the Dot." }] };
+    }
     if (profile.provider === "acpx") {
-      if (["cursor", "copilot"].includes(profile.acpxAgent)) {
+      if (["copilot", "pi"].includes(profile.acpxAgent)) {
         // The profile resolver already validated the isolated host's exact
         // qualification pair. Do not report a production readiness pass.
         return {
@@ -414,7 +420,7 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
         };
       }
       try {
-        if (profile.acpxAgent !== "claude" && profile.acpxAgent !== "grok" && profile.acpxAgent !== "pi") throw new Error("Select Codex to use the native Codex runner.");
+        if (profile.acpxAgent !== "claude" && profile.acpxAgent !== "grok" && profile.acpxAgent !== "cursor") throw new Error("Select Codex to use the native Codex runner.");
         const target = context.executionTarget;
         if (target?.kind === "remote") {
           const probe = await runAdapterExecutionTargetShellCommand(
@@ -432,9 +438,8 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
               message: "The remote platform is supported. Runtime package integrity and readiness must still be verified by the remote runner before launch." }],
           };
         }
-        const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxPiInstallation } = await import("../vendor/paperclip-runner/index.js");
-        await (profile.acpxAgent === "pi" ? probeAcpxPiInstallation
-          : profile.acpxAgent === "grok" ? probeAcpxGrokInstallation : probeAcpxClaudeInstallation)(profile.model);
+        const { probeAcpxClaudeInstallation, probeAcpxGrokInstallation, probeAcpxCursorInstallation } = await import("../vendor/paperclip-runner/live/index.js");
+        await (profile.acpxAgent === "grok" ? probeAcpxGrokInstallation : profile.acpxAgent === "cursor" ? probeAcpxCursorInstallation : probeAcpxClaudeInstallation)(profile.model);
         return {
           adapterType: "paperclip_runner", status: "pass" as const, testedAt: new Date().toISOString(),
           checks: [{ code: "acpx_runtime_ready", level: "info" as const, message: `ACPX ${profile.acpxAgent} runtime is installed and verified. Model access is checked when it runs.` }],
@@ -489,19 +494,19 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
   models: [
     ...codexModels,
     { id: DEFAULT_OPENCODE_RUNNER_MODEL, label: "OpenRouter · DeepSeek V4 Flash 0731" },
-    { id: QUALIFIED_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
+    { id: DEFAULT_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
     { id: "global.anthropic.claude-sonnet-4-6", label: "Amazon Bedrock · Claude Sonnet 4.6 (global)" },
   ],
   listModels: async () => [
     ...await listCodexModels(),
     { id: DEFAULT_OPENCODE_RUNNER_MODEL, label: "OpenRouter · DeepSeek V4 Flash 0731" },
-    { id: QUALIFIED_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
+    { id: DEFAULT_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
     { id: "global.anthropic.claude-sonnet-4-6", label: "Amazon Bedrock · Claude Sonnet 4.6 (global)" },
   ],
   refreshModels: async () => [
     ...await refreshCodexModels(),
     { id: DEFAULT_OPENCODE_RUNNER_MODEL, label: "OpenRouter · DeepSeek V4 Flash 0731" },
-    { id: QUALIFIED_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
+    { id: DEFAULT_ACPX_RUNNER_MODELS.claude, label: "Claude Sonnet 5" },
     { id: "global.anthropic.claude-sonnet-4-6", label: "Amazon Bedrock · Claude Sonnet 4.6 (global)" },
   ],
   supportsLocalAgentJwt: false,
@@ -518,9 +523,9 @@ const paperclipRunnerAdapter: ServerAdapterModule = {
           "opencode",
           `opencode-ai@${QUALIFIED_OPENCODE_RUNNER_VERSION}`,
         )
-      : buildNpmRuntimeCommandSpec(config, "codex", "@openai/codex@0.156.0"),
+      : buildNpmRuntimeCommandSpec(config, "codex", "@openai/codex@0.160.0"),
   agentConfigurationDoc:
-    "# Paperclip Runner\n\nAdapter: paperclip_runner\n\nRuns Codex, OpenCode, Claude Managed, AWS AgentCore, or ACPX Claude/Grok Build/Pi through the Rust Paperclip runner and authenticated PRP transport. Pi requires the exact openrouter/deepseek/deepseek-v4-flash-0731 model and a bound OPENROUTER_API_KEY. Cursor and GitHub Copilot are awaiting local and Daytona qualification and are not enabled for production runs. Managed providers use company-scoped qualified profiles, explicit retention acknowledgement, and spend limits.\n",
+    "# Paperclip Runner\n\nAdapter: paperclip_runner\n\nRuns Codex, OpenCode, Claude Managed, AWS AgentCore, or ACPX Claude/Grok Build/Cursor through the Rust Paperclip runner and authenticated PRP transport. GitHub Copilot and Pi are awaiting local and Daytona qualification and are not enabled for production runs. Managed providers use company-scoped qualified profiles, explicit retention acknowledgement, and spend limits.\n",
   getConfigSchema: () => ({
     fields: [
       {
@@ -702,6 +707,7 @@ const cursorLocalAdapter: ServerAdapterModule = {
   syncSkills: syncCursorSkills,
   sessionCodec: cursorSessionCodec,
   sessionManagement: getAdapterSessionManagement("cursor") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: cursorModels,
   listModels: listCursorModels,
   supportsLocalAgentJwt: true,
@@ -745,6 +751,7 @@ const geminiLocalAdapter: ServerAdapterModule = {
   syncSkills: syncGeminiSkills,
   sessionCodec: geminiSessionCodec,
   sessionManagement: getAdapterSessionManagement("gemini_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: geminiModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
@@ -765,6 +772,7 @@ const grokLocalAdapter: ServerAdapterModule = {
   syncSkills: syncGrokSkills,
   sessionCodec: grokSessionCodec,
   sessionManagement: getAdapterSessionManagement("grok_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: grokModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
@@ -796,6 +804,7 @@ const kimiLocalAdapter: ServerAdapterModule = {
   syncSkills: syncKimiSkills,
   sessionCodec: kimiSessionCodec,
   sessionManagement: getAdapterSessionManagement("kimi_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: kimiModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
@@ -838,6 +847,7 @@ const openCodeLocalAdapter: ServerAdapterModule = {
   sessionCodec: openCodeSessionCodec,
   models: openCodeModels,
   sessionManagement: getAdapterSessionManagement("opencode_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   listModels: listOpenCodeModels,
   supportsLocalAgentJwt: true,
   supportsInstructionsBundle: true,
@@ -856,6 +866,7 @@ const piLocalAdapter: ServerAdapterModule = {
   syncSkills: syncPiSkills,
   sessionCodec: piSessionCodec,
   sessionManagement: getAdapterSessionManagement("pi_local") ?? undefined,
+  supportsToolRefreshOnResume: true,
   models: [],
   listModels: listPiModels,
   supportsLocalAgentJwt: true,

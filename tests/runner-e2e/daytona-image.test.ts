@@ -200,8 +200,6 @@ describe("runner E2E Daytona image contract", () => {
       "packages/paperclip-eval-kernel/src",
       "packages/paperclip-runner/package.json",
       "packages/paperclip-runner/scripts/candidate-provider-pack.mjs",
-      "packages/paperclip-runner/scripts/build-copilot-distribution.mjs",
-      "packages/paperclip-runner/scripts/materialize-copilot-binary.mjs",
       "packages/paperclip-runner/scripts/materialize-cursor-distribution.mjs",
       "packages/paperclip-runner/scripts/cursor-runtime-patch.mjs",
       "packages/paperclip-runner/cursor-distributions.json",
@@ -284,11 +282,7 @@ describe("runner E2E Daytona image contract", () => {
         ),
         'pub const VERSION: &str = "one";\n',
       );
-      await mkdir(path.join(root, "packages/paperclip-runner/scripts/pi-distribution"), { recursive: true });
       for (const relativePath of [
-        "packages/paperclip-runner/scripts/materialize-pi-distribution.mjs",
-        "packages/paperclip-runner/scripts/pi-distribution/package.json",
-        "packages/paperclip-runner/scripts/pi-distribution/package-lock.json",
       ]) await writeFile(path.join(root, relativePath), "version one\n");
       const baseline = await computeDaytonaImageContentId(options);
       const candidate = await computeDaytonaImageContentId({ ...options, candidateProviders: ["pi"] });
@@ -347,9 +341,11 @@ describe("runner E2E Daytona image contract", () => {
     }
   });
 
-  it("invalidates the image when the Cursor runtime isolation patch changes", async () => {
-    const root = await mkdtemp(path.join(tmpdir(), "paperclip-cursor-image-id-"));
-    const patchPath = "packages/paperclip-runner/scripts/cursor-runtime-patch.mjs";
+  it.each([
+    "packages/paperclip-runner/scripts/cursor-runtime-patch.mjs",
+    "packages/paperclip-runner/scripts/provider-pack-executable-shims.mjs",
+  ])("invalidates the image when %s changes", async (patchPath) => {
+    const root = await mkdtemp(path.join(tmpdir(), "paperclip-provider-image-id-"));
     expect(DAYTONA_IMAGE_INPUT_PATHS).toContain(patchPath);
     const options = {
       repositoryRoot: root,
