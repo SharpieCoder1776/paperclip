@@ -184,6 +184,31 @@ RUN chmod +x /usr/local/bin/docker-entrypoint.sh
 
 COPY --chown=node:node --from=build /app /app
 
+# Bake the Muse CLI into the image so fresh containers can run muse-local
+# agents with no hand-install. Pinned to the same qualified release the
+# adapter installs (packages/adapters/muse-local/src/index.ts); the build
+# fails if these drift from the adapter's pins. Auth is deliberately NOT
+# baked in: the server reads /paperclip/.config/muse/auth.json from the
+# persisted volume (HOME=/paperclip) or META_API_KEY at runtime.
+ARG MUSE_CLI_VERSION="1.4.2-R4684.1"
+ARG MUSE_CLI_SHA256_X86_64="dfb3096c91f4767c4d98006460800b7ba906a0b1a408280a926a8dc19a1af64f"
+ARG MUSE_CLI_SHA256_AARCH64="fa6974c23307a0d5db91367549e41505a5e7b55dcd66c672eb2dd89c1a125ad6"
+RUN set -eux; \
+  grep -qF "\"${MUSE_CLI_VERSION}\"" packages/adapters/muse-local/src/index.ts; \
+  grep -qF "\"${MUSE_CLI_SHA256_X86_64}\"" packages/adapters/muse-local/src/index.ts; \
+  grep -qF "\"${MUSE_CLI_SHA256_AARCH64}\"" packages/adapters/muse-local/src/index.ts; \
+  ARCH="$(dpkg --print-architecture)"; \
+  case "$ARCH" in \
+    amd64) MUSE_FILE="muse-x86-linux"; MUSE_SHA256="${MUSE_CLI_SHA256_X86_64}" ;; \
+    arm64) MUSE_FILE="muse-aarch64-linux"; MUSE_SHA256="${MUSE_CLI_SHA256_AARCH64}" ;; \
+    *) echo "unsupported architecture: $ARCH" >&2; exit 1 ;; \
+  esac; \
+  curl -fsSLo /tmp/muse-bin "https://lookaside.facebook.com/lookaside/muse/download/?channel=muse&version=${MUSE_CLI_VERSION}&file=${MUSE_FILE}"; \
+  echo "${MUSE_SHA256}  /tmp/muse-bin" | sha256sum -c -; \
+  chmod +x /tmp/muse-bin; \
+  mv -f /tmp/muse-bin /usr/local/bin/muse; \
+  muse --version
+
 COPY --from=runner-provider-pack /provider-pack /opt/paperclip-runner/provider-pack
 # Managed deployments can remap node's UID at startup. This immutable pack
 # contains public code and integrity metadata, never credentials; it must remain
