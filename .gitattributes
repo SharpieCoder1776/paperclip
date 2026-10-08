@@ -1,3 +1,29 @@
 patches/*.patch whitespace=-space-before-tab
 
-*.sh text eol=lf
+# --- Line endings ---------------------------------------------------------
+# Git for Windows sets core.autocrlf=true system-wide, so a Windows checkout
+# materialises text files with CRLF while the repo stores LF. That matters
+# because several generators hash RAW file bytes:
+#
+#   generate-protocol-manifest.mjs:  sha256(await readFile(path, "utf8"))
+#
+# so the same sources produce different manifest hashes per platform, and a
+# manifest regenerated on Windows fails check:protocol-manifest in CI. Pin LF
+# so the working tree matches the content it is hashed against.
+#
+# Extensions are listed explicitly (rather than `* text=auto`) so this stays
+# line-ending-neutral: no existing file's stored content changes. `.md` is
+# deliberately omitted because adapter-plugin.md is stored with CRLF.
+
+*.sh   text eol=lf
+*.json text eol=lf
+*.mjs  text eol=lf
+*.js   text eol=lf
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.rs   text eol=lf
+*.toml text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
