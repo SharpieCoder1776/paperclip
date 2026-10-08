@@ -87,8 +87,8 @@ describe("Copilot build-owned installation", () => {
     expect(QUALIFIED_ACPX_PROFILES.copilot.qualificationStatus).toBe("pending");
   });
 
-  it("admits the current v16 declaration and binds its source policy, receipts and patch hashes", () => {
-    const identity = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v16-identity.json", import.meta.url), "utf8"));
+  it("admits the current v17 declaration and binds its source policy, receipts and patch hashes", () => {
+    const identity = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v17-identity.json", import.meta.url), "utf8"));
     expect(identity.declaration.systemInstructionDelivery).toBe(COPILOT_SYSTEM_INSTRUCTION_DELIVERY);
     expect(identity.declaration.sharedRuntimeContract).toBe("paperclip.acpx-runtime-contract.v1");
     expect(identity.declaration.permissionContextContract).toBe(COPILOT_PERMISSION_CONTEXT_CONTRACT);
@@ -119,7 +119,7 @@ describe("Copilot build-owned installation", () => {
     expect([...closure].filter(path => !bound.has(path))).toEqual(["negative-control:unbound-policy"]);
   });
   it.each([...PERMISSION_POLICY_SOURCES, ...SEMANTIC_RECEIPT_SOURCES])("changing %s changes the candidate identity", (_path, field) => {
-    const identity = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v16-identity.json", import.meta.url), "utf8"));
+    const identity = JSON.parse(readFileSync(new URL("../../../test/fixtures/copilot-profile-v17-identity.json", import.meta.url), "utf8"));
     identity.declaration[field] = "0".repeat(64);
     const sorted = Object.fromEntries(Object.entries(identity.declaration).sort(([a], [b]) => a.localeCompare(b)));
     expect(`sha256:${createHash("sha256").update(JSON.stringify(sorted)).digest("hex")}`).not.toBe(identity.commandDigest);

@@ -28,19 +28,19 @@ import { persistedCursorUsageNotice } from "../drivers/acpx/usage-accounting.js"
 import { captureTurnRejection } from "../../test/capture-turn-rejection.js";
 import * as workspaceDiff from "./workspace-diff.js";
 
-it.each(["pi", "copilot"] as const)("requires separately bound evaluation opt-in for %s", async (acpxAgent) => {
+it.each(["copilot"] as const)("requires separately bound evaluation opt-in for %s", async (acpxAgent) => {
   const service = new CapabilityLiveSessionService();
-  await expect(service.create({ provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}), requestedModel: "explicit-model" }))
+  await expect(service.create({ provider: "acpx", acpxAgent, requestedModel: "explicit-model" }))
     .rejects.toThrow("explicit evaluation opt-in");
   const mismatched = new CapabilityLiveSessionService({ transportOptions: {
-    acpxCandidateProfile: acpxAgent === "pi" ? "copilot" : "pi",
+    acpxCandidateProfile: "pi",
   } });
-  await expect(mismatched.create({ provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}), requestedModel: "explicit-model" }))
+  await expect(mismatched.create({ provider: "acpx", acpxAgent, requestedModel: "explicit-model" }))
     .rejects.toThrow("explicit evaluation opt-in");
 });
 
-it("admits Pi evaluation sessions only with candidate opt-in while preserving the exact profile", async () => {
-  const service = new CapabilityLiveSessionService({ transportFactory: fakeTransportFactory(providerState()), transportOptions: { acpxCandidateProfile: "pi" } });
+it("admits Pi live sessions without candidate opt-in while preserving the exact profile", async () => {
+  const service = new CapabilityLiveSessionService({ transportFactory: fakeTransportFactory(providerState()) });
   const session = await service.create({ provider: "acpx", acpxAgent: "pi", piThinkingLevel: "low", requestedModel: "openrouter/deepseek/deepseek-v4-flash-0731" });
   try {
     expect(session.snapshot().config.acpxProfile).toMatchObject({
