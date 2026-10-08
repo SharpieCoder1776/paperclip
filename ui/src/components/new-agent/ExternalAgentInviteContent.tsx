@@ -98,6 +98,10 @@ export function ExternalAgentInviteContent({
   const provider = presets.find(item => item.id === preset);
   const dot = preset === "dot";
   const ready = dot && connection.phase === "ready" && !connection.problem;
+  const connecting = dot && connection.phase !== "waiting";
+  const progressLabel = connection.problem === "offline" ? "Updates paused"
+    : connection.problem === "event_timeout" ? "Needs attention"
+    : connection.phase === "connected" ? "Connecting…" : "Confirming connection…";
   return <>
     <div className="min-h-0 space-y-6 overflow-y-auto px-6 pb-6 pt-8 sm:px-8">
       <div className="space-y-3 pr-5">
@@ -109,6 +113,7 @@ export function ExternalAgentInviteContent({
           <DialogDescription className="text-sm leading-relaxed">
             {!provider ? `Bring an agent you already use into ${companyName}.`
               : ready ? `Your Dot can now receive assignments and work with ${companyName}.`
+              : connecting ? "Your Dot has connected. We’re checking that task updates can travel both ways."
               : dot ? "Copy the setup prompt and send it to your Dot in ChatGPT. Your Dot will connect itself; we’ll watch for it here."
               : `Copy the invitation prompt and send it to your ${preset === "hermes" ? "Hermes " : ""}agent. Approve its join request in Paperclip when it’s ready.`}
           </DialogDescription>
@@ -131,6 +136,10 @@ export function ExternalAgentInviteContent({
       </Button>
       {provider && (approvalHref ? <Button asChild><Link to={approvalHref} onClick={onClose}>Review approval</Link></Button>
         : ready ? <Button onClick={onClose}>Done</Button>
+        : connecting ? <Button disabled aria-live="polite">
+          {!connection.problem && <Loader2 className="size-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />}
+          {progressLabel}
+        </Button>
         : dot && connection.problem === "prompt_unavailable" ? <Button disabled={busy} onClick={onNewPrompt}>Create a new prompt</Button>
         : !prompt || busy ? <Button disabled>{busy ? "Preparing…" : "Waiting for Dot…"}</Button>
         : <AgentSetupPrompt

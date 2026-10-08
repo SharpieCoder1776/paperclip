@@ -241,11 +241,26 @@ it("copies one scoped Dot prompt, resumes on Back, and trusts only server readin
   await click("Back"); await select();
   expect(dotApi.create).toHaveBeenCalledTimes(1);
   expect(dotApi.pair).toHaveBeenCalledTimes(1);
-  connection.binding = { ...connection.binding, status: "ready", connected: true, subscriptionVerified: true };
+  await click("Copy setup prompt");
+  expect(document.querySelector('button[aria-label="Close agent setup"]')).not.toBeNull();
+  connection.binding = { ...connection.binding, status: "connected", connected: true };
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect(document.querySelector('button[aria-label="Close agent setup"]')).toBeNull();
+  expect(document.body.textContent).not.toContain("Copy setup prompt");
+  expect([...document.querySelectorAll("button")].find(b => b.textContent === "Connecting…")?.disabled).toBe(true);
+  connection.binding = { ...connection.binding, subscriptionVerified: true, hasPendingChallenge: true };
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
+  expect([...document.querySelectorAll("button")].find(b => b.textContent === "Confirming connection…")?.disabled).toBe(true);
+  expect(document.body.textContent).not.toContain("Done");
+  connection.binding = { ...connection.binding, status: "ready", connected: true, subscriptionVerified: true, hasPendingChallenge: false };
   await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(document.body.textContent).toContain("Your Dot is connected");
   expect(document.body.textContent).toContain("Test event confirmed");
+  await click("Done");
+  expect(state.close).toHaveBeenCalledTimes(1);
 });
 
 it("waits for company approval before issuing a Dot capability", async () => {

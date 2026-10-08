@@ -39,7 +39,8 @@ export const CopyAndConnect: Story = {
     await userEvent.click(await page.findByRole("button", { name: "Dot Your Dot in ChatGPT" }));
     await userEvent.click(page.getByRole("button", { name: "Copy setup prompt" }));
     await expect(await page.findByText("Copied to clipboard")).toBeVisible();
-    await userEvent.click(page.getByRole("button", { name: "Close agent setup" }));
+    await waitFor(() => expect(page.queryByRole("button", { name: "Close agent setup" })).not.toBeInTheDocument());
+    await expect(page.queryByRole("button", { name: "Copy setup prompt" })).not.toBeInTheDocument();
     await waitFor(() => expect(page.getByRole("heading", { name: "Your Dot is connected" })).toBeVisible(), { timeout: 6000 });
     await expect(page.getByText("Test event confirmed", { exact: false })).toHaveTextContent("complete");
     await userEvent.click(page.getByRole("button", { name: "Done" }));
