@@ -16,6 +16,8 @@ const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const workspaceRoot = resolve(packageRoot, "../..");
 const lockDirectory = join(packageRoot, "scripts/pi-distribution");
 const patchPath = join(workspaceRoot, "patches/pi-acp@0.0.33.patch");
+const securityPatchPath = join(workspaceRoot, "patches/brace-expansion@5.0.9.patch");
+export const PI_BRACE_SECURITY_PATCH_SHA256 = "5273a195b952f233336122842faaf650193c04f36b9359d20d4d63079b0ce814";
 const supportedTargets = new Set(["darwin-arm64", "darwin-x64", "linux-x64"]);
 export const PI_DISTRIBUTION_PINS = Object.freeze({
   wrapper: "0.0.33", runtime: "1.0.0", sdk: "0.26.0", zod: "3.25.76", nodeVersion: PI_NODE_VERSION, undici: "8.10.2", nodeBundledUndici: "7.29.1",
@@ -24,7 +26,7 @@ export const PI_DISTRIBUTION_PINS = Object.freeze({
 });
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex");
 
-/** npm ci preserves the complete Pi 1.0.0 published shrinkwrap unchanged. */
+/** Install the published Pi graph; then apply the one pinned security correction. */
 export function piDistributionInstallCommand() {
   return ["ci", "--ignore-scripts", "--include=optional", "--omit=dev", "--no-audit", "--no-fund", "--registry=https://registry.npmjs.org", "--userconfig=.npmrc", "--globalconfig=.npmrc-global"];
 }
@@ -56,6 +58,14 @@ export async function verifyLockedPiPackageGraph(root, lock, target = { platform
   for (const [path, entry] of Object.entries(shrinkwrap.packages)) {
     if (!path) continue;
     const pinned = lock.packages[`${piPath}/${path}`];
+    // Pi bundles its dependency payload, so npm overrides do not replace it.
+    // Only this reviewed build-owned patch may differ from the upstream graph.
+    if (path === "node_modules/brace-expansion" && entry.version === "5.0.9"
+      && entry.integrity === "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg=="
+      && entry.resolved === "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz"
+      && pinned?.version === "5.0.12"
+      && pinned.integrity === "sha512-YovQ3rzhaLMIrDjNDMkNS01tea93qhEhG5xy8f6+R0l+dw3Ki+5sCoIoI942iuLZTHWogWktgwVDhU09iNEimQ=="
+      && pinned.resolved === "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.12.tgz") continue;
     if (!pinned || pinned.version !== entry.version || (entry.integrity !== undefined && pinned.integrity !== entry.integrity) || pinned.resolved !== entry.resolved) throw new Error(`Pi distribution dropped or changed shrinkwrapped package ${path}`);
   }
   return verified;
@@ -130,6 +140,7 @@ export async function materializePiDistribution({ outputRoot, nodeExecutable, np
   checkCancelled();
   const inputLockDirectory = inputs?.lockDirectory ?? lockDirectory;
   const inputPatchPath = inputs?.patchPath ?? patchPath;
+  const inputSecurityPatchPath = inputs?.securityPatchPath ?? securityPatchPath;
   const helperSourcePath = inputs?.helperSourcePath ?? join(packageRoot, "src/drivers/acpx/pi-acp-runtime.ts");
   const extensionSourcePath = inputs?.extensionSourcePath ?? join(packageRoot, "src/drivers/acpx/pi-runtime-extension.ts");
   if (typeof outputRoot !== "string" || !outputRoot || !isAbsolute(outputRoot)) throw new Error("Pi distribution output must be absolute");
@@ -183,6 +194,10 @@ export async function materializePiDistribution({ outputRoot, nodeExecutable, np
     const installedLockBytes = await readFile(join(runtimeRoot, "package-lock.json"));
     if (!installedLockBytes.equals(await readFile(join(inputLockDirectory, "package-lock.json")))) throw new Error("Pi installation changed its committed lock");
     const lock = JSON.parse(installedLockBytes.toString("utf8"));
+    if (hash(await readFile(inputSecurityPatchPath)) !== PI_BRACE_SECURITY_PATCH_SHA256) throw new Error("Pi dependency security patch differs from its reviewed pin");
+    const braceRoot = join(runtimeRoot, "node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion");
+    await runOwned("git", ["apply", "--check", inputSecurityPatchPath], { cwd: braceRoot, env: environment, timeout: 10_000 });
+    await runOwned("git", ["apply", inputSecurityPatchPath], { cwd: braceRoot, env: environment, timeout: 10_000 });
     const packageCount = await verifyLockedPiPackageGraph(runtimeRoot, lock);
     const wrapper = join(runtimeRoot, "node_modules/pi-acp");
     await runOwned("git", ["apply", "--check", inputPatchPath], { cwd: wrapper, env: environment, timeout: 10_000 });

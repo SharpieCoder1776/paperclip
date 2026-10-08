@@ -1,3 +1,4 @@
+import { configuredEnvironment } from "../../configured-environment.js";
 import { PI_CREDENTIAL_NAMES, piCredentialNames } from "./pi-provider-config.js";
 import type { QualifiedAcpxAgent } from "./qualified-profiles.js";
 
@@ -89,7 +90,7 @@ export function createSanitizedAcpxSpawnInput(
 ): SanitizedAcpxSpawnInput {
   const source = environment ?? process.env;
   const candidate = isCandidate(agent);
-  const result: NodeJS.ProcessEnv = {};
+  const result: NodeJS.ProcessEnv = configuredEnvironment(environment);
   const credentialNames = agent === "pi" ? piCredentialNames(environment) : ACPX_CREDENTIAL_NAMES[agent];
   const allowed = new Set([
     "PATH",

@@ -1,3 +1,4 @@
+import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { admittedPiThinkingLevel, resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { configuredEnvironment } from "../configured-environment.js";
 import { resolveAcpxProviderMode } from "../drivers/acpx/provider-mode.js";
@@ -3576,7 +3577,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
       throw new Error("native_adopted_runner_state_directory_required");
     }
     if (options.provider === "acpx" && options.acpxAgent !== undefined
-      && ["copilot"].includes(options.acpxAgent)
+      && ACPX_CAPABILITY_PROFILES[options.acpxAgent].qualification === "pending"
       && options.acpxCandidateProfile !== options.acpxAgent) {
       throw new Error("The candidate ACPX profile requires explicit evaluation opt-in");
     }

@@ -27,7 +27,9 @@ async function renderMarkup(node: ReactNode, expand?: string, inspect?: (contain
   return html;
 }
 
-async function renderRunner(config: Record<string, unknown>, expand?: string, inspect?: (container: HTMLElement) => void): Promise<string> {
+async function renderRunner(config: Record<string, unknown>, expand?: string, inspectOrDot?: ((container: HTMLElement) => void) | boolean): Promise<string> {
+  const openAiDotEnabled = inspectOrDot === true;
+  const inspect = typeof inspectOrDot === "function" ? inspectOrDot : undefined;
   return renderMarkup(
     <TooltipProvider>
       <CodexLocalConfigFields

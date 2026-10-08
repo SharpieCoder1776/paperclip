@@ -1,3 +1,4 @@
+import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import type {
   CapabilityLiveSessionSnapshot,
@@ -265,7 +266,7 @@ export function parseEvalSessionRequest(
   if (options.candidateProfile !== undefined && (provider !== "acpx" || acpxAgent !== options.candidateProfile || !candidate)) {
     throw new Error("--candidate-profile must match the request's registered candidate ACPX agent");
   }
-  if (candidate && acpxAgent !== "pi" && acpxAgent !== "cursor" && options.candidateProfile !== acpxAgent) {
+  if (candidate && acpxAgent && ACPX_CAPABILITY_PROFILES[acpxAgent].qualification === "pending" && options.candidateProfile !== acpxAgent) {
     throw new Error("Candidate ACPX profiles require an explicit matching --candidate-profile diagnostic flag");
   }
   const managedProfileInput = input.managedProfile === null

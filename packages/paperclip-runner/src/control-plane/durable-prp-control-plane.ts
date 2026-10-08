@@ -3470,7 +3470,7 @@ function runnerEnvironment(
         if (bound[key] !== undefined) environment[key] = bound[key];
       }
     }
-    Object.assign(environment, githubCredentialEnvironment(explicitSource));
+    Object.assign(environment, githubCredentialEnvironment(explicitSource), configuredEnvironment(explicitSource));
   }
   return environment;
 }

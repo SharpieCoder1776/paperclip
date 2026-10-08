@@ -1,5 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { paperclipRunnerUIAdapter } from "./index";
+import { createPiProfileExtensionAdapter, PI_NOTICE_METHOD } from "../../../../packages/paperclip-runner/src/drivers/acpx/pi-extension-adapter";
+import { transcriptToTaskChatItems } from "../../components/task-chat/transcript-adapter";
+
+const piFailure = (overrides: Record<string, unknown> = {}, eventOverrides: Record<string, unknown> = {}) => ({
+  type: "paperclip.prp.event",
+  event: {
+    runId: "run-1", turnId: "turn-1", normalizedSessionId: "session-1",
+    eventType: "provider.notice.recorded",
+    payload: {
+      schema: "paperclip.provider.notice.v1", noticeId: "notice-1", category: "pi.runtime_failure",
+      severity: "error", summary: "Pi process exited with code 4", scope: "session",
+      recoverable: false, userActionable: false,
+      details: [{ name: "source.method", value: PI_NOTICE_METHOD },
+        { name: "source.nativeEvent", value: "runtime_failure" }, { name: "source.sessionId", value: "session-1" },
+        { name: "reason", value: "native_process_exited" }],
+      ...overrides,
+    },
+    ...eventOverrides,
+  },
+});
 
 describe("paperclip runner transcript projection", () => {
   it("keeps both pinned Pi failure facts while rendering one consecutive diagnostic", async () => {

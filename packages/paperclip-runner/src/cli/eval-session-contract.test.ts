@@ -225,11 +225,12 @@ describe("eval-session request contract", () => {
     })))).toBe("17");
   });
 
-  it("requires explicit Pi diagnosis and accepts both qualified remote provider profiles", () => {
-    expect(() => parseEvalSessionRequest(request({
+  it("admits Pi and both qualified remote provider profiles", () => {
+    expect(parseEvalSessionRequest(request({
       provider: "acpx",
       acpxAgent: "pi",
-    }))).toThrow("--candidate-profile");
+      piThinkingLevel: "low",
+    }))).toMatchObject({ acpxAgent: "pi", piThinkingLevel: "low" });
     expect(parseEvalSessionRequest(request({
       provider: "aws_agentcore",
       driver: "aws_agentcore_harness_api",

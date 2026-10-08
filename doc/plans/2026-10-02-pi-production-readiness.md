@@ -20,7 +20,9 @@ accepts the caller's explicit native model; no allowlist, hardcoded default or
 fallback is added. Pi profile 19 has command digest
 `sha256:b7647ebf97f802ca053ec3384c912bf0e8d18eba308d27397bb1d95a37220825`.
 
-The merge onto newer master uses Pi profile 20 (`sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e`). Its declaration differs from profile 19 only in the revision and the shared sandbox source hash: master adds configured task environment keys in the Codex-only branch. Pi runtime, wrapper, extension, closures, model configuration, credential environment and recovery identity hashes are unchanged. The seven live results above remain evidence for their original profile 19 source; profile 20 integration is verified by current-head tests and CI.
+An initial master integration checkpoint used Pi profile 20 (`sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e`). It bound the Codex-only sandbox change. This checkpoint is retained as history and is superseded by profile 21 before merge.
+
+The assembled merge uses Pi profile 21 (`sha256:514cbf86e70c1eaedebdf924bc0f3de4753c7a9e0313a0bb38614b6b9481a9a1`). It restores master's explicit task-environment projection and patches the bundled `brace-expansion` dependency from 5.0.9 to the official 5.0.12 payload. Pi 1.0.0, pi-acp 0.0.33, Node 24.21.0, wrapper, helper, extension, native question/control delivery, model selection and recovery identity remain unchanged. The original three closure hashes were reproduced before calculating the patched ones. The dependency patch is hash-pinned, is included in installed setup tooling, and is checked against the complete locked package graph. The seven live results retain their original profile-19 source and are not relabeled as fresh profile-21 runs. Profile-21 integration and the narrow security correction require current-head tests, package materialization and CI before merge. Cursor keeps its existing qualified status. Copilot stays pending; its new profile-17 attestation only binds master's updated shared protocol validation sources.
 
 | Core path | Canonical campaign | Retained evidence |
 | --- | --- | --- |
@@ -111,7 +113,7 @@ harness `ee3b094d35719e4dd7cbc791d1924205c4fa474f` and immutable image
 Their canonical results and independent cleanup pass; their host stops normally.
 They do not substitute for the seven fresh profile-19 results above.
 
-The merge onto newer master uses Pi profile 20 (`sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e`). Its declaration differs from profile 19 only in the revision and the shared sandbox source hash: master adds configured task environment keys in the Codex-only branch. Pi runtime, wrapper, extension, closures, model configuration, credential environment and recovery identity hashes are unchanged. The seven live results above remain evidence for their original profile 19 source; profile 20 integration is verified by current-head tests and CI.
+The earlier profile-20 merge checkpoint is retained above as history; current merge verification uses profile 21.
 
 | Core path | Canonical campaign | Retained evidence |
 | --- | --- | --- |

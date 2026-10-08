@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
-import { assertPiNodeSystemDependencies, PI_DISTRIBUTION_PINS, materializePiDistribution, resolvePiBundledNpm, piDistributionInstallCommand, verifyLockedPiPackageGraph, writePiDistributionManifest } from "./materialize-pi-distribution.mjs";
+import { assertPiNodeSystemDependencies, PI_BRACE_SECURITY_PATCH_SHA256, PI_DISTRIBUTION_PINS, materializePiDistribution, resolvePiBundledNpm, piDistributionInstallCommand, verifyLockedPiPackageGraph, writePiDistributionManifest } from "./materialize-pi-distribution.mjs";
 import { verifyPiRuntimeManifest } from "../src/drivers/acpx/pi-verified-runtime.ts";
 
 async function fixture(t) {
@@ -30,6 +31,9 @@ test("distribution lock closes exact wrapper, SDK and upstream Pi graph with int
   const lock = JSON.parse(await readFile(new URL("./pi-distribution/package-lock.json", import.meta.url), "utf8"));
   assert.deepEqual(lock.packages[""].dependencies, pkg.dependencies);
   assert.equal(pkg.overrides, undefined);
+  assert.equal(lock.packages["node_modules/@earendil-works/pi-coding-agent/node_modules/brace-expansion"].version, "5.0.12");
+  const patch = await readFile(new URL("../../../patches/brace-expansion@5.0.9.patch", import.meta.url));
+  assert.equal(createHash("sha256").update(patch).digest("hex"), PI_BRACE_SECURITY_PATCH_SHA256);
   assert.equal(lock.packages["node_modules/@earendil-works/pi-coding-agent/node_modules/undici"].version, "8.10.2");
   assert.equal(PI_DISTRIBUTION_PINS.nodeVersion, "24.21.0");
   assert.equal(PI_DISTRIBUTION_PINS.nodeBundledUndici, "7.29.1");
@@ -44,6 +48,25 @@ test("distribution lock closes exact wrapper, SDK and upstream Pi graph with int
   assert.ok(piDistributionInstallCommand().includes("--ignore-scripts"));
   assert.ok(piDistributionInstallCommand().includes("--include=optional"));
   assert.equal(piDistributionInstallCommand()[0], "ci");
+});
+
+test("only the exact brace-expansion security correction may differ from Pi's shrinkwrap", async (t) => {
+  const { root, write } = await fixture(t);
+  const pi = "node_modules/@earendil-works/pi-coding-agent";
+  const old = { version: "5.0.9", resolved: "https://registry.npmjs.org/brace-expansion/-/brace-expansion-5.0.9.tgz", integrity: "sha512-ScQ4IuvIEF1TMlP7Zt+vjJ//9zlPb2SDcxWxM3bk8s6t6GGdJ7KO1dCcTidOPJKePW30LE/2cT7wCyPho9/Wxg==" };
+  const lock = JSON.parse(await readFile(new URL("./pi-distribution/package-lock.json", import.meta.url), "utf8"));
+  const brace = lock.packages[`${pi}/node_modules/brace-expansion`];
+  const minimal = { lockfileVersion: 3, packages: { [pi]: lock.packages[pi], [`${pi}/node_modules/brace-expansion`]: brace } };
+  await write(`${pi}/package.json`, JSON.stringify({ version: "1.0.0" }));
+  await write(`${pi}/npm-shrinkwrap.json`, JSON.stringify({ version: "1.0.0", lockfileVersion: 3, packages: { "node_modules/brace-expansion": old } }));
+  await write(`${pi}/node_modules/brace-expansion/package.json`, JSON.stringify({ version: "5.0.9" }));
+  await assert.rejects(verifyLockedPiPackageGraph(root, minimal), /differs from its lock/);
+  await write(`${pi}/node_modules/brace-expansion/package.json`, JSON.stringify({ version: "5.0.12" }));
+  assert.equal(await verifyLockedPiPackageGraph(root, minimal), 2);
+  for (const field of ["version", "resolved", "integrity"]) {
+    const tampered = structuredClone(minimal); tampered.packages[`${pi}/node_modules/brace-expansion`][field] += "-changed";
+    await assert.rejects(verifyLockedPiPackageGraph(root, tampered), /unpin|differs|dropped or changed/);
+  }
 });
 
 test("package verification rejects missing, version-shifted and incomplete shrinkwrap graphs", async (t) => {
