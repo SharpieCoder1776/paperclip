@@ -1,6 +1,7 @@
+import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
+import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { normalizeProviderNotice } from "../drivers/provider-notices.js";
 import { liveRunResultFeedback } from "./run-result-feedback.js";
-import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { createHash, randomUUID } from "node:crypto";
 import { resolve } from "node:path";
 
@@ -907,7 +908,7 @@ export class CapabilityLiveSessionService {
   async create(input: CreateCapabilityLiveSessionInput = {}): Promise<CapabilityLiveSession> {
     resolvePiThinkingLevel(input.provider === "acpx" ? input.acpxAgent ?? "codex" : "", input.piThinkingLevel);
     if (input.provider === "acpx" && input.acpxAgent !== undefined
-      && ["pi", "copilot"].includes(input.acpxAgent)
+      && ACPX_CAPABILITY_PROFILES[input.acpxAgent].qualification === "pending"
       && this.#transportOptions.acpxCandidateProfile !== input.acpxAgent) {
       throw new Error("The candidate ACPX profile requires explicit evaluation opt-in");
     }

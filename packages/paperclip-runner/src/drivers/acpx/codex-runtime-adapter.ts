@@ -31,9 +31,9 @@ import {
 import type { AcpxModelStatus } from "./model-verification.js";
 import { AcpxApprovalRequiredError, decideAcpxPermission } from "./permission-policy.js";
 import { ACPX_CAPABILITY_PROFILES } from "./capability-profiles.js";
-import { assertCopilotPromptPolicy, createCopilotProtocolGuard } from "./copilot-policy.js";
 import { admitCursorInstructions, createCursorInstructionAdmission } from "./cursor-instructions.js";
 import { createAcpxModeBinding } from "./provider-mode.js";
+import { assertCopilotPromptPolicy, createCopilotProtocolGuard } from "./copilot-policy.js";
 
 const VERIFIED_COMMAND_SENTINEL = "paperclip-verified-acpx-command";
 const DEFAULT_RUNTIME_CLOSE_TIMEOUT_MS = 2_000;
@@ -302,11 +302,9 @@ export async function openQualifiedAcpxRuntime(
     );
   };
   const commandLaunches = { count: 0, refreshConsumedCommand: options.refreshConsumedCommand };
-  const selectedPiThinkingLevel = resolvePiThinkingLevel(options.profile.agent, options.piThinkingLevel);
-  const piThinking = selectedPiThinkingLevel
-    ? createPiThinkingAdmission(selectedPiThinkingLevel, { restoring: options.restoringSession })
-    : null;
   const modeBinding = createAcpxModeBinding(options.profile.agent, options.mode);
+  const selectedPiThinkingLevel = resolvePiThinkingLevel(options.profile.agent, options.piThinkingLevel);
+  const piThinking = selectedPiThinkingLevel ? createPiThinkingAdmission(selectedPiThinkingLevel, { restoring: options.restoringSession }) : undefined;
   const cursorInstructions = options.profile.agent === "cursor"
     ? createCursorInstructionAdmission(options.systemInstructions)
     : null;
@@ -544,6 +542,7 @@ export async function openQualifiedAcpxRuntime(
       : await boundedHandshake;
     cursorInstructions?.assertReady();
     modeBinding?.assertReady();
+    piThinking?.assertReady();
     // A provider can answer only after the verified sentinel is armed, but do
     // not admit the session until the owner has observed that exact handoff.
     await children.verifyLifetimeOwnership();

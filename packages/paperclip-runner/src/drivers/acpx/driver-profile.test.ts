@@ -94,12 +94,12 @@ describe("ACPX driver profile", () => {
       ok: true,
       config: { agent: "pi", permissionMode: "approve-all" },
     });
-    for (const agent of ["cursor", "copilot"]) {
+    for (const agent of ["copilot"]) {
       expect(validateAcpxDriverConfig({ agent, model: "explicit-model" }))
         .toMatchObject({ ok: false, issues: [{ path: "agent", code: "qualification_pending" }] });
     }
-    expect(validateAcpxDriverConfig({ agent: "pi", model: "another-model" }))
-      .toMatchObject({ ok: false, issues: [{ path: "model", code: "invalid_model" }] });
+    expect(validateAcpxDriverConfig({ agent: "pi", piThinkingLevel: "low", model: "another-model" }))
+      .toMatchObject({ ok: true, config: { model: "another-model" } });
     expect(
       validateAcpxDriverConfig({
         agent: "claude",

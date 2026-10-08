@@ -1091,12 +1091,23 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     const companyId = randomUUID();
     const assignedAgentId = randomUUID();
     const replacementAgentId = randomUUID();
-    await db.insert(companies).values({
-      id: companyId,
-      name: `Chat Test ${companyId.slice(0, 8)}`,
-      issuePrefix: `C${companyId.replace(/-/g, "").toUpperCase()}`,
-      requireBoardApprovalForNewAgents: false,
-    });
+    let inserted = false;
+    // Retired fixtures retain company rows. Retry only the short-prefix unique
+    // conflict; every other database error must still fail the test immediately.
+    for (let attempt = 0; attempt < companyPrefixAttempts; attempt += 1) {
+      const [company] = await db.insert(companies).values({
+        id: companyId,
+        name: `Chat Test ${companyId.slice(0, 8)}`,
+        issuePrefix: nextIssuePrefix(),
+        requireBoardApprovalForNewAgents: false,
+      }).onConflictDoNothing({ target: companies.issuePrefix }).returning({ id: companies.id });
+      if (company) {
+        inserted = true;
+        fixtureCompanies.add(companyId);
+        break;
+      }
+    }
+    if (!inserted) throw new Error(`Could not allocate a chat fixture company prefix after ${companyPrefixAttempts} attempts`);
     const now = new Date();
     await db
       .insert(authUsers)
@@ -1614,6 +1625,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.processPendingPublications();
     const providerRuntime = fakeRuntime.endpoints.get(endpointId);
     if (providerRuntime) providerRuntime.posts.length = 0;
+    return setupFollowUpMessageId;
   }
 
   async function configuredSlackEndpoint(
@@ -28229,8 +28241,18 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
         }),
         trigger: "direct_message",
       });
-      await qualifySetupRoundTrip(service, endpoint.id, userId);
+      const setupMessageId = await qualifySetupRoundTrip(service, endpoint.id, userId);
       await service.test(endpoint.id, "owner-user");
+      if (provider === "telegram") {
+        // Setup dispatches receipt cleanup asynchronously. Finish it before
+        // measuring reaction removals owned by this fixture's working run.
+        await service.processPendingReceiptReactions();
+        await waitForProcessedReceiptRemoval(endpoint.id, {
+          threadId: thread.thread.id,
+          messageId: setupMessageId,
+          emoji: "eyes",
+        });
+      }
       const [conversation] = await service.listConversations(endpoint.id);
       const runId = randomUUID();
       await db.insert(heartbeatRuns).values({
@@ -62562,7 +62584,7 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     },
   );
 
-  it("orders reversed GitHub edit and delete callbacks behind their durable root", async () => {
+  it.each([false, true])("orders reversed GitHub edit and delete callbacks behind their durable root (root processed before replay: %s)", async (rootProcessedFirst) => {
     const fixture = await seedCompany();
     const deferred: Array<() => void | Promise<void>> = [];
     const { callbacks, endpoint, service, wakeup, webhookSecret } =
@@ -62665,8 +62687,28 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     // One root-conversation drain plus one durable-ingress callback per HTTP
     // request is queued. The duplicate delivery callback becomes a no-op.
     expect(deferred).toHaveLength(4);
+    if (rootProcessedFirst) {
+      await deferred.shift()?.();
+      await vi.waitFor(async () => {
+        const [root] = await db
+          .select({ state: chatDeliveries.state })
+          .from(chatDeliveries)
+          .where(eq(chatDeliveries.endpointId, endpoint.id));
+        expect(root.state).toBe("processed");
+      });
+    }
     await drainDeferred();
+    // The scheduler callbacks start background promises. Wait for durable
+    // replay admission before draining the conversation work it schedules.
     await vi.waitFor(async () => {
+      const deliveries = await db
+        .select({ id: chatDeliveries.id })
+        .from(chatDeliveries)
+        .where(eq(chatDeliveries.endpointId, endpoint.id));
+      expect(deliveries).toHaveLength(3);
+    });
+    await vi.waitFor(async () => {
+      await drainDeferred();
       const deliveries = await db
         .select({
           eventKind: chatDeliveries.eventKind,

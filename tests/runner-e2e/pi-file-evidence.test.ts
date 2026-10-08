@@ -5,7 +5,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import { collectPiFileEvidence, gradePiCopyback, gradePiFileEvidence, piFileContract, seedPiFile } from "./pi-file-evidence.js";
+import { collectPiFileEvidence, gradePiCopyback, gradePiFileEvidence, piFileContract, piFilePrompt, seedPiFile } from "./pi-file-evidence.js";
 import { canonicalProviderEventsFromAcpxRuntimeEvent, createAcpxToolEventNormalizer } from "../../packages/paperclip-runner/src/provider-events.js";
 import { safeAcpxLocations } from "../../packages/paperclip-runner/src/drivers/acpx/safe-locations.js";
 import { classifyFailure } from "./failure-classifier.js";
@@ -84,6 +84,23 @@ describe("Pi edit, validation and public artifact oracle", () => {
     expect(fixture().events.map(e => e.payload.prpEvent.payload.target)).toEqual([null, "extended-fixture.txt", "extended-fixture.txt", null, null, null]);
     expect(fixture().events.slice(3).every(e => e.payload.prpEvent.payload.name === "bash")).toBe(true);
     expect(result.verification.nativeFileAttribution).toBe("workspace_relative_display_target");
+  });
+  it.each(["before", "after"])("rejects an extra metadata bash call %s validation despite correct file and download bytes", placement => {
+    const f = fixture();
+    const metadata = structuredClone(f.events.slice(3));
+    for (const row of metadata) row.payload.prpEvent.payload.executionId = "metadata";
+    metadata[1]!.payload.prpEvent.payload.progress = "wc -c extended-fixture.txt (in_progress): wc -c extended-fixture.txt";
+    metadata[2]!.payload.prpEvent.payload.output = JSON.stringify({
+      content: [{ type: "text", text: "17 extended-fixture.txt\n" }],
+      structuredContent: { output: "17 extended-fixture.txt\n", truncated: false, exit_code: 0 },
+    });
+    if (placement === "before") f.events.splice(3, 0, ...metadata);
+    else f.events.push(...metadata);
+    for (const [index, row] of f.events.entries()) {
+      row.seq = row.sourceSeq = row.payload.prpEvent.sourceSeq = index + 1;
+      row.sourceEventId = row.payload.prpEvent.sourceEventId = `runner:run:${index + 1}`;
+    }
+    expect(() => gradePiFileEvidence(f)).toThrow("one observed provider validation execution");
   });
   const mutations: Array<[string, (f: ReturnType<typeof fixture>) => void]> = [
     ["absent seed", f => { f.seed = {} as any; }],
@@ -169,12 +186,25 @@ describe("Pi edit, validation and public artifact oracle", () => {
       await expect(validate()).rejects.toMatchObject({ code: 1 });
     } finally { await rm(root, { recursive: true, force: true }); }
   });
+  it("pastes the literal validation command as Markdown code instead of escaped paragraph text", () => {
+    const command = piFileContract("0123456789ab-1").validationCommand;
+    const fenced = piFilePrompt("0123456789ab-1").match(/\n```bash\n([^\n]+)\n```\n/u);
+    expect(fenced?.[1]).toBe(command);
+    expect(fenced?.[1]).toContain("!==");
+    expect(fenced?.[1]).not.toContain("!\\=\\=");
+  });
   it("changes only Pi file prompts and keeps all four question methods", () => {
     const cells = runnerMatrix.filter(c => c.suite.id === "extended-harnesses" && c.task.id === "file-edit-validate");
     expect(cells).toHaveLength(6);
     for (const cell of cells) {
       const prompt = cell.task.buildPrompt("fixture");
       expect(prompt.includes("register_deliverable")).toBe(cell.profile.qualificationCandidate === "pi");
+      if (cell.profile.qualificationCandidate === "pi") {
+        const artifact = cell.task.buildMatchers("fixture", cell).find(matcher => matcher.kind === "artifact_exact");
+        if (!artifact || artifact.kind !== "artifact_exact") throw new Error("Pi file task must require a registered artifact");
+        expect(artifact.name).toBe(piFileContract("fixture").filename);
+        expect(prompt).toContain(`title ${artifact.name},`);
+      }
     }
     expect(runnerMatrix.filter(c => c.profile.qualificationCandidate === "pi")).toHaveLength(26);
   });

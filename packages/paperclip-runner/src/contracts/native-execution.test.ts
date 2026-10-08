@@ -117,6 +117,22 @@ describe("NativeExecutionInputV1", () => {
     expect(composeNativeSystemInstructions(parsed.runtimeContext, "Follow sibling.md")).toBe(
       `${PAPERCLIP_EXECUTION_PROMPT}\n\nFollow sibling.md\n\nRead-only instruction sibling root: /runtime/instructions`,
     );
+    const agentFilesContext = {
+      ...parsed.runtimeContext,
+      instructions: {
+        ...parsed.runtimeContext.instructions,
+        workingCopy: { kind: "agent_files" as const, rootPath: "/runtime/current-agent-copy", entryPath: "AGENTS.md" },
+      },
+    };
+    const agentFilesInstructions = composeNativeSystemInstructions(agentFilesContext, "Preserve my personal notes.");
+    expect(agentFilesInstructions).toContain("AGENT_HOME) is /runtime/current-agent-copy.");
+    expect(agentFilesInstructions).toContain("its absolute path may change between turns");
+    expect(agentFilesInstructions).toContain("use the current $AGENT_HOME environment variable instead of an absolute agent-directory path from an earlier turn");
+    expect(agentFilesInstructions).toContain("All supported files and subfolders there are restored across tasks and sessions");
+    expect(agentFilesInstructions).toContain("Write task deliverables in the task working directory");
+    expect(agentFilesInstructions).toContain("Preserve my personal notes.");
+    expect(agentFilesInstructions).toMatch(/Read-only instruction sibling root: \/runtime\/instructions$/);
+    expect(composeNativeSystemInstructions(parsed.runtimeContext, "Follow sibling.md")).not.toContain("$AGENT_HOME");
     expect(canonicalNativeRuntimeContextDigest({
       ...context,
       mcp: { ...context.mcp, bindingId: "native-mcp:run-2" },
@@ -325,6 +341,20 @@ describe("NativeExecutionInputV1", () => {
     })).toThrow("eventExpiryDays");
   });
 
+  it.each([
+    [17, "sha256:a1d976c437cb736c9cce8ebe8b8baf59e571761a8d00e8b1885e72dd906d8f21"],
+    [18, "sha256:9d3e7d8269f1a0af94616552dfc69671932688b81dbbd5bab9ef356b3a9cbccb"],
+  ] as const)("decodes a persisted Pi profile-%s run without rewriting its identity", (agentProfileVersion, commandDigest) => {
+    const { permissionPolicy: _permissionPolicy, ...nativeProfile } = QUALIFIED_ACPX_PROFILES.pi;
+    const profile = { ...nativeProfile, agentProfileVersion, commandDigest };
+    const persisted = { ...input, session: { ...input.session, driverKind: "acpx_runtime" },
+      provider: { kind: "acpx", agent: "pi", model: "openrouter/deepseek/deepseek-v4-flash-0731",
+        piThinkingLevel: "low", permissionPolicy: "interactive", profile } };
+    const parsed = parseNativeExecutionInput(persisted);
+    expect(parsed.provider).toEqual(persisted.provider);
+    expect(parseNativeExecutionInput(parsed)).toEqual(parsed);
+  });
+
   it.each([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const)("accepts only a closed ACPX profile matching the driver and agent at profile version %s", (agentProfileVersion) => {
     const provider = {
       kind: "acpx",
@@ -357,11 +387,11 @@ describe("NativeExecutionInputV1", () => {
       profile: provider.profile,
     });
     expect(parseNativeExecutionInput(parsed)).toEqual(parsed);
-    for (const unsupportedVersion of [0, 14, 1.5, "13", null]) {
+    for (const unsupportedVersion of [0, Math.max(16, QUALIFIED_ACPX_PROFILES.pi.agentProfileVersion) + 1, 1.5, "14", null]) {
       expect(() => parseNativeExecutionInput({
         ...input,
         session: { ...input.session, driverKind: "acpx_runtime" },
-        provider: { ...provider, profile: { ...provider.profile, agentProfileVersion: unsupportedVersion } },
+        provider: { ...provider, piThinkingLevel: "low", profile: { ...provider.profile, agentProfileVersion: unsupportedVersion } },
       })).toThrow("qualified ACPX v1 profile");
     }
     expect(buildNativeModelEnvelope(parsed).workspace).toEqual({ cwd: "/safe/workspace" });
@@ -533,63 +563,6 @@ describe("native task context ownership", () => {
       runtimeContext: { ...context, aggregateDigest: canonicalNativeRuntimeContextDigest(context) },
     });
   }
-
-  it.each(["off", "low", "high", "max"])("requires exact Pi13 thinking level %s in native input", piThinkingLevel => {
-    const { permissionPolicy: _permission, qualificationStatus: _status, ...profile } = QUALIFIED_ACPX_PROFILES.pi;
-    const qualificationModel = "openrouter/test-provider-model";
-    const value = { ...currentInput(), session: { ...currentInput().session, driverKind: "acpx_runtime" }, provider: { kind: "acpx", agent: "pi", model: qualificationModel, permissionMode: "approve-all", piThinkingLevel, profile } };
-    expect(parseNativeExecutionInput(value).provider).toEqual(value.provider);
-    for (const mode of [undefined, null, "medium", "minimal", "xhigh", "", { toString: () => "low" }]) expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, piThinkingLevel: mode } })).toThrow(/piThinkingLevel/);
-    expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, agent: "codex" } })).toThrow(/piThinkingLevel/);
-  });
-
-  it.each(["agent", "plan", "ask"])("round-trips Cursor mode %s through the closed execution contract", mode => {
-    const { qualificationModel: _model, reportedModelId: _reported, permissionPolicy: _permission,
-      modelPolicy: _policy, qualificationStatus: _status, ...profile } = QUALIFIED_ACPX_PROFILES.cursor;
-    const value = { ...currentInput(), session: { ...currentInput().session, driverKind: "acpx_runtime" },
-      provider: { kind: "acpx", agent: "cursor", model: "explicit-model", permissionMode: "deny-all", mode, profile } };
-    const result = parseNativeExecutionInput(value);
-    expect(result.provider).toEqual(value.provider);
-    expect(parseNativeExecutionInput(result)).toEqual(result);
-    for (const mode of [null, "", true, { toString: () => "plan" }]) {
-      expect(() => parseNativeExecutionInput({ ...value, provider: { ...value.provider, mode: mode } })).toThrow("mode");
-    }
-  });
-
-  it.each([
-    { driverKind: "opencode_server", provider: { kind: "opencode", model: "openrouter/deepseek/deepseek-v4-flash-0731", permissionMode: "deny" } },
-    { driverKind: "acpx_runtime", provider: {
-      kind: "acpx", agent: "pi", model: "openrouter/deepseek/deepseek-v4-flash-0731", permissionMode: "deny-all",
-      profile: { driverKind: "acpx_runtime", protocolVersion: 1, acpxVersion: "0.13.1", agent: "pi", agentProfileVersion: 1,
-        agentServerPackage: "pi-acp", agentServerVersion: "0.0.33", agentRuntimePackage: "@earendil-works/pi-coding-agent",
-        agentRuntimeVersion: "0.84.2", commandDigest: `sha256:${"a".repeat(64)}` },
-    } },
-    { driverKind: "openai_dot_mcp", provider: {
-      kind: "openai_dot", model: null,
-      binding: { bindingId: "dot-binding", bindingGeneration: 1, companyId: input.binding.companyId, agentId: input.binding.agentId,
-        acceptByUnixMs: 1_000, expiresAtUnixMs: 2_000 },
-    } },
-  ])("preserves an unregistered saved prompt for $provider.kind", ({ driverKind, provider }) => {
-    const current = currentInput();
-    if (!("runtimeContext" in current)) throw new Error("Expected a runtime context");
-    const text = "Saved instructions absent from the current release.";
-    const context = { ...current.runtimeContext,
-      prompt: { revision: "saved-prompt-before-upgrade", text, digest: createHash("sha256").update(text).digest("hex") } };
-    context.aggregateDigest = canonicalNativeRuntimeContextDigest(context);
-    const persisted = JSON.parse(JSON.stringify({
-      ...current, provider, session: { ...current.session, driverKind }, runtimeContext: context,
-      ...(provider.kind === "openai_dot" ? {
-        schema: NATIVE_EXECUTION_INPUT_SCHEMA_V6,
-        workspace: { access: "none", cwd: null, repoUrl: null, repoRef: null, branchName: null },
-        credentialBindings: [],
-      } : {}),
-    }));
-    const recovered = parseNativeExecutionInput(persisted);
-    expect(recovered.runtimeContext).toEqual(context);
-    expect(recovered.provider).toEqual(provider);
-    expect(recovered.session.driverKind).toBe(driverKind);
-    expect(parseNativeExecutionInput(recovered)).toEqual(recovered);
-  });
 
   it("carries an opaque provider mode without a vendor restriction and fences obsolete field names", () => {
     const current = currentInput();

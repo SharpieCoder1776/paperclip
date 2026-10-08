@@ -374,11 +374,31 @@ export async function installPiRuntimeExtension(
   pi.registerTool({
     name: PI_NATIVE_QUESTION_TOOL, label: "Ask a native question",
     description: "Ask the human a native Pi select, confirm, input, or editor question. Select is single-choice and returns the supplied stable option ID. This cannot approve tools or a Paperclip Plan. For durable task questions or Plan approval use the assigned Paperclip semantic tools. Cancellation is not an answer; confirm false means No or dismissal.",
+    // Model gateways may render only the root properties when describing a
+    // tool. Expose the field types there as well as in the strict method
+    // branches, so an array of options cannot be mistaken for JSON text.
     parameters: { type: "object", additionalProperties: false, required: ["method", "title"], properties: {
-      method: { type: "string", enum: ["select", "confirm", "input", "editor"] }, title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH },
+      method: { type: "string", enum: ["select", "confirm", "input", "editor"] },
+      title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH },
       options: { type: "array", minItems: 1, maxItems: 128, items: { type: "object", additionalProperties: false, required: ["id", "label"], properties: { id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" }, label: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH } } } },
-      message: { type: "string", maxLength: 16384 }, placeholder: { type: "string", maxLength: 16384 }, prefill: { type: "string", maxLength: 16384 },
-    } },
+      message: { type: "string", maxLength: 16384 },
+      placeholder: { type: "string", maxLength: 16384 },
+      prefill: { type: "string", maxLength: 16384 },
+    }, anyOf: [
+      { type: "object", additionalProperties: false, required: ["method", "title", "options"], properties: {
+        method: { const: "select" }, title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH },
+        options: { type: "array", minItems: 1, maxItems: 128, items: { type: "object", additionalProperties: false, required: ["id", "label"], properties: { id: { type: "string", pattern: "^[A-Za-z0-9_-]{1,128}$" }, label: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH } } } },
+      } },
+      { type: "object", additionalProperties: false, required: ["method", "title", "message"], properties: {
+        method: { const: "confirm" }, title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH }, message: { type: "string", maxLength: 16384 },
+      } },
+      { type: "object", additionalProperties: false, required: ["method", "title"], properties: {
+        method: { const: "input" }, title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH }, placeholder: { type: "string", maxLength: 16384 },
+      } },
+      { type: "object", additionalProperties: false, required: ["method", "title"], properties: {
+        method: { const: "editor" }, title: { type: "string", maxLength: PI_QUESTION_LABEL_MAX_LENGTH }, prefill: { type: "string", maxLength: 16384 },
+      } },
+    ] },
     async execute(callId, args, signal, _onUpdate, context) {
       const id = identities.bind(callId, PI_NATIVE_QUESTION_TOOL, args);
       const previous = questions.get(id); if (previous) return previous;

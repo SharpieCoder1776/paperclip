@@ -851,7 +851,7 @@ describe("HarnessDriverBackend", () => {
         expect(events.map((event) => event.eventType)).toEqual([
           "runtime_request.created",
           "runtime_request.expired",
-          "turn.interrupted",
+          "turn.failed",
         ]);
       }
       await session.close({ reason: "fixture complete" });
@@ -898,7 +898,7 @@ describe("HarnessDriverBackend", () => {
     await session.close({ reason: "fixture complete" });
   });
 
-  it("emits one non-replayable input expiration and terminal wait after provider loss", async () => {
+  it("expires pending input without converting provider loss into a successful wait", async () => {
     const questionSet = {
       schema: "paperclip.question_set.v1" as const,
       questions: [{ id: "target", prompt: "Which target?", required: true, answerMode: "text" as const }],
@@ -940,11 +940,14 @@ describe("HarnessDriverBackend", () => {
       },
     } });
     await expect(iterator.next()).resolves.toMatchObject({ value: {
-      eventType: "turn.interrupted",
+      eventType: "turn.failed",
       sourceSeq: 3,
       payload: { reason: "provider_process_lost" },
     } });
     await expect(iterator.next()).resolves.toMatchObject({ done: true });
+    await expect(session.snapshot()).resolves.toMatchObject({ terminal: {
+      turnTerminalState: "failed", runTerminalState: "failed",
+    } });
   });
 
   it("does not synthesize a fallback after the input was already resolved", async () => {

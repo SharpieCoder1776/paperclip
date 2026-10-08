@@ -25,14 +25,14 @@ it("admits all26 current Pi cases through pinned installed public CLI/server wit
   const { env, server } = await fixture(); expect(cells).toHaveLength(26);
   for (const cell of cells) expect(await verifyInstalledCli(env, [cell])).toMatchObject({ serverRoot: server, defaultRuntimeResolution: true, qualificationOverride: false });
 });
-it("qualified Pi always drops ambient candidate admission while pending C/C retain exact gates", () => {
+it("qualified providers drop ambient admission while pending Copilot retains its exact gate", () => {
   for (const cell of cells) expect(buildRunnerE2EProcessEnvironment({ PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" }, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
-  for (const agent of ["cursor", "copilot"]) {
+  for (const agent of ["copilot"]) {
     const cell = runnerMatrix.find(e => e.profile.qualificationCandidate === agent)!;
     expect(JSON.parse(buildRunnerE2EProcessEnvironment({}, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent, model: cell.profile.model }]);
   }
-  const changed = { ...cells[0]!, profile: { ...cells[0]!.profile, model: "wrong-model" } };
-  expect(() => buildRunnerE2EProcessEnvironment({}, [changed])).toThrow("exact declared model");
+  const changed = { ...cells[0]!, profile: { ...cells[0]!.profile, model: "custom/explicit-model" } };
+  expect(buildRunnerE2EProcessEnvironment({}, [changed]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
 });
 it("rejects partial authority, unsupported cells and every runtime/path override", async () => {
   const { env } = await fixture();

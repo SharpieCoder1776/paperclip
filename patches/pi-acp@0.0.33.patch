@@ -477,7 +477,7 @@
 +          this.uiBridge.cancelAll();
            const reason = this.cancelRequested ? "cancelled" : "end_turn";
 -          this.pendingTurn?.resolve(reason);
-+          this.pendingTurn?.resolve({ stopReason: reason, ...this.turnUsage.response() });
++          this.pendingTurn?.resolve({ stopReason: reason, ...this.turnUsage.response(reason) });
            this.pendingTurn = null;
            this.inAgentLoop = false;
            const next = this.turnQueue.shift();
@@ -1463,10 +1463,10 @@
 +    this.failed = previousFailure;
 +  }
 +
-+  response()              {
++  response(stopReason                           )              {
 +    return {
 +      ...(this.observed ? { usage: { ...Object.fromEntries(Object.entries(this.total).filter(([name]) => !this.unknown.has(name                           ))), _meta: { paperclipPi: { provenance: this.compactionObserved ? "assistant_message_and_compaction_receipts" : "assistant_message_receipts", ...(this.costObserved && !this.costIncomplete ? { costUsd: this.cost, costSource: "pi_pricing_estimate" } : {}) } } } } : {}),
-+      ...(this.failed ? { _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: "error", category: "service", title: "Pi provider request failed" } } } } } : {}),
++      ...(this.failed && stopReason !== "cancelled" ? { _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: "error", category: "service", title: "Pi provider request failed" } } } } } : {}),
 +    };
 +  }
 +}

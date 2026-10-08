@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import childProcess, { execFileSync } from "node:child_process";
 import { prepareAdapterExecutionTargetRuntime } from "@paperclipai/adapter-utils/execution-target";
 import { captureDirectorySnapshot } from "@paperclipai/adapter-utils/workspace-restore-merge";
+import { prepareSandboxManagedRuntime } from "@paperclipai/adapter-utils/sandbox-managed-runtime";
 import { agentDirectoryBaselineDigest, agentDirectoryProbeProgram, observeLocalAgentDirectory, probeAgentDirectory, retireAgentDirectoryTransferScratch, agentDirectoryTransferCleanupProgram } from "../services/agent-directory-probe.js";
 
 describe("stable live agent directory observation", () => {
@@ -97,6 +98,51 @@ describe("stable live agent directory observation", () => {
       expect(() => probeAgentDirectory(remote)).not.toThrow();
       expect(probeAgentDirectory(remote).digest).toBe(agentDirectoryBaselineDigest(baseline));
     } finally { await runtime?.cleanupWorkspaceSnapshot?.(); fs.rmSync(remote, { recursive: true, force: true }); }
+  });
+  it("keeps restart fallback transfer scratch outside the native memory directory", async () => {
+    const remoteCwd = `${root}-remote`;
+    const agentHome = join(remoteCwd, ".paperclip-runtime", "agent-files", "agent", "original-run");
+    const scratch = join(remoteCwd, ".paperclip-runtime", "paperclip-runner", "agent-file-transfers", "agent", "original-run");
+    fs.mkdirSync(agentHome, { recursive: true });
+    fs.cpSync(root, agentHome, { recursive: true });
+    const target = { kind: "remote" as const, transport: "sandbox" as const, remoteCwd,
+      // A newly bound controller target may have no native sync hooks. Exercise
+      // the production command/base64 fallback rather than a transport mock.
+      runner: { execute: async (input: Parameters<import("@paperclipai/adapter-utils/command-managed-runtime").CommandManagedRuntimeRunner["execute"]>[0]) => ({
+        stdout: execFileSync(input.command, input.args ?? [], { cwd: input.cwd, input: input.stdin, encoding: "utf8",
+          env: { PATH: process.env.PATH, ...input.env }, timeout: input.timeoutMs, maxBuffer: 32 * 1024 * 1024 }),
+        stderr: "", exitCode: 0, signal: null, timedOut: false, pid: null, startedAt: new Date().toISOString(),
+      }) } };
+    let runtime: Awaited<ReturnType<typeof prepareAdapterExecutionTargetRuntime>> | undefined;
+    try {
+      const baseline = await captureDirectorySnapshot(root);
+      runtime = await prepareAdapterExecutionTargetRuntime({ target, runId: "restart-transfer", adapterKey: "agent-files",
+        workspaceLocalDir: root, workspaceRemoteDir: agentHome, runtimeRootDir: scratch,
+        syncWorkspace: true, workspaceInboundMode: "adopt_remote", workspaceBaseline: baseline,
+        workspaceGitSnapshot: null, workspaceFileMode: "all", workspaceExclude: [".paperclip-runtime", ".paperclip-runtime/**"] });
+      const memory = "0123456789abcdef0123456789abcdef\n";
+      fs.writeFileSync(join(agentHome, "notes", "memory.txt"), memory);
+      await runtime.restoreWorkspace();
+      expect(fs.readFileSync(join(root, "notes", "memory.txt"), "utf8")).toBe(memory);
+      // A transfer must not introduce a reserved path that the product's own
+      // full agent-directory probe rejects, including after controller recovery.
+      expect(() => probeAgentDirectory(agentHome)).not.toThrow();
+      expect(fs.existsSync(join(agentHome, ".paperclip-runtime"))).toBe(false);
+      expect(runtime.runtimeRootDir).toBe(scratch);
+      expect(fs.readdirSync(scratch)).toEqual([]);
+    } finally { await runtime?.cleanupWorkspaceSnapshot?.(); fs.rmSync(remoteCwd, { recursive: true, force: true }); }
+  });
+  it.each(["outside", "reserved-root", "relative", "traversal", "trailing-slash", "nul"])("rejects %s transfer scratch before filesystem work", async kind => {
+    const reserved = join(root, ".paperclip-runtime");
+    const invalid = {
+      outside: `${root}-foreign/scratch`, "reserved-root": reserved, relative: ".paperclip-runtime/scratch",
+      traversal: `${reserved}/../../scratch`, "trailing-slash": `${reserved}/scratch/`, nul: `${reserved}/scratch\0`,
+    }[kind]!;
+    await expect(prepareSandboxManagedRuntime({
+      spec: { transport: "sandbox", provider: "fixture", sandboxId: "owned", remoteCwd: root, apiKey: null },
+      adapterKey: "agent-files", client: {} as never, workspaceLocalDir: root, runtimeRootDir: invalid,
+    })).rejects.toThrow("Transfer scratch must remain within the lease runtime tree");
+    expect(fs.existsSync(reserved)).toBe(false);
   });
   it.each(["file", "extra-directory", "symlink", "race"])("fails closed on %s in transfer-owned scratch without deleting contents", kind => {
     const parent = join(root, ".paperclip-runtime"), scratch = join(parent, "agent-files");

@@ -1699,32 +1699,6 @@ export async function commitNativeStatusDecision(input: {
         throw new NativeStatusRaceError();
       }
     }
-    let cursorPlanWait: Awaited<ReturnType<typeof readNativeCursorPlanWait>> = null;
-    let cursorPlanWaitResult: { resultId: string; resultSha256: string } | null = null;
-    if (reasonCode === "native_plan_accepted_waiting_for_continuation") {
-      const expected = input.requireCursorPlanWaitSource;
-      if (!expected || expected.companyId !== input.companyId || expected.issueId !== input.issueId || expected.runId !== input.runId || input.decision.effects.length !== 0 || input.decision.statusAction !== "in_progress" || input.decision.toStatus !== "in_progress") throw new NativeStatusRaceError();
-      try {
-        cursorPlanWait = await readNativeCursorPlanWait(tx as unknown as Db, expected, true);
-        if (!cursorPlanWait || nativeSha256(cursorPlanWait.source) !== nativeSha256(expected)) throw new NativeStatusRaceError();
-        // Recheck the committed semantic result too: an arbitrary caller cannot
-        // use a genuine plan receipt to authorize a different finalization.
-        const [accepted] = await tx.select().from(nativeRunResults).where(and(
-          eq(nativeRunResults.id, coordinator!.resultId!), eq(nativeRunResults.companyId, input.companyId),
-          eq(nativeRunResults.issueId, input.issueId), eq(nativeRunResults.runId, input.runId), eq(nativeRunResults.schemaStatus, "accepted"),
-        )).for("share", { noWait: true });
-        const envelope = record(accepted?.resultJson), terminal = record(envelope.terminal);
-        if (!accepted || accepted.completionContractId !== cursorPlanWait.source.contractId || accepted.turnId !== cursorPlanWait.source.turnId ||
-          nativeSha256(envelope.result) !== nativeSha256(cursorPlanWait.result) ||
-          terminal.schema !== "paperclip.prp.terminal.v1" || terminal.runTerminalState !== "succeeded" || terminal.turnTerminalState !== "completed" || terminal.reportedWorkDisposition !== "yielded") throw new NativeStatusRaceError();
-        // completeRun hashes its full private binding, not the stored resultJson.
-        // Preserve that accepted identity instead of inventing a new digest.
-        cursorPlanWaitResult = { resultId: accepted.id, resultSha256: accepted.canonicalSha256 };
-      } catch (error) {
-        if (isExternalChatWaitAuthorizationContention(error)) throw new NativeStatusRaceError();
-        throw error;
-      }
-    }
     const passiveBoardResponseWait =
       reasonCode === "board_response_waiting" ||
       reasonCode === "board_response_wait_superseded";
