@@ -5,10 +5,9 @@ import { type Stats, constants } from "node:fs";
 import * as fs from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { resolveQualifiedAcpxProfile } from "../../vendor/paperclip-runner/index.js";
+import { QUALIFIED_ACPX_PROFILES } from "../../vendor/paperclip-runner/index.js";
 
 const SERVER_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
-const MODEL = "openrouter/deepseek/deepseek-v4-flash-0731";
 const MAX_BYTES = 4 * 1024 ** 3;
 const MAX_FILE = 512 * 1024 ** 2;
 const MANIFEST = "companion.json";
@@ -78,7 +77,7 @@ async function installedIdentity(serverRoot: string, check: Checkpoint) {
   await directory(serverRoot); const pkg = JSON.parse((await readOwned(join(serverRoot, "package.json"), 65536, check, true)).toString()); require(pkg.name === "@paperclipai/server", "public server package required");
   const source = JSON.parse((await readOwned(join(serverRoot, "dist/build-info.json"), 65536, check, true)).toString()).commit;
   require(typeof source === "string" && /^[a-f0-9]{40}$/u.test(source), "installed build source is missing");
-  const profile = resolveQualifiedAcpxProfile("pi", MODEL); require(profile.qualificationStatus !== "pending", "Pi is not qualified");
+  const profile = QUALIFIED_ACPX_PROFILES.pi; require(profile.qualificationStatus !== "pending", "Pi is not qualified");
   return { source, profileDigest: profile.commandDigest };
 }
 async function validate(root: string, manifest: RemotePiCompanionManifest, identity: Awaited<ReturnType<typeof installedIdentity>>, check: Checkpoint) {
@@ -96,7 +95,7 @@ async function validate(root: string, manifest: RemotePiCompanionManifest, ident
 /** Release-side command uses this same inventory contract before publication. */
 export async function createRemotePiCompanionManifest(root: string, sourceRevision: string): Promise<RemotePiCompanionManifest> {
   const check = checkpoints();
-  const profile = resolveQualifiedAcpxProfile("pi", MODEL); const pack = JSON.parse((await readOwned(join(root, "provider-pack/provider-pack.json"), 16 * 1024 ** 2, check)).toString()); const entries = await inventoryRemoteCompanion(root, check);
+  const profile = QUALIFIED_ACPX_PROFILES.pi; const pack = JSON.parse((await readOwned(join(root, "provider-pack/provider-pack.json"), 16 * 1024 ** 2, check)).toString()); const entries = await inventoryRemoteCompanion(root, check);
   const daemon = entries.find(e => e.path === "bin/paperclip-runnerd"); require(daemon?.kind === "file", "daemon missing");
   const manifest: RemotePiCompanionManifest = { schema: "paperclip.remote-pi-companion/v1", sourceRevision, target: "linux-x64", profileDigest: profile.commandDigest, providerPackDigest: pack.digest, daemonSha256: daemon.sha256, entries };
   require(/^[a-f0-9]{40}$/u.test(sourceRevision), "release source"); await validate(root, manifest, { source: sourceRevision, profileDigest: profile.commandDigest }, check); return manifest;

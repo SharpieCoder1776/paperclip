@@ -32,7 +32,7 @@ function setField(r: any, key: string, value: string) { frame(r).payload.details
 describe("Copilot semantic completion public-event oracle", () => {
   it("versions the actual Copilot suite oracle without changing denial settlement", () => {
     const suite = runnerSuites.find(s => s.id === "copilot-protection")!;
-    expect(suite.definitionMetadata).toMatchObject({ version: 8, semanticCompletionEvidence: "paperclip.e2e.copilot-semantic-completion.v2", denialSettlementEvidence: "paperclip.e2e.copilot-denial-settlement.v3" });
+    expect(suite.definitionMetadata).toMatchObject({ version: 9, semanticCompletionEvidence: "paperclip.e2e.copilot-semantic-completion.v2", denialSettlementEvidence: "paperclip.e2e.copilot-denial-settlement.v3" });
     expect(suiteDefinitionHash(suite)).not.toBe(suiteDefinitionHash({ ...suite, definitionMetadata: { ...suite.definitionMetadata, version: 7 } }));
   });
   it("joins exact native lifecycle, authoritative callback, proposed content and accepted control-plane result", () => {

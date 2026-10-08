@@ -1,4 +1,3 @@
-import { hasCommittedNativeCursorPlanWait } from "../native-runtime/native-cursor-plan-wait.js";
 import { isAiAuthenticationBlocked } from "../ai-auth-failure.js";
 import { hasCommittedNativePlanWait } from "../native-runtime/native-plan-wait.js";
 import { isNativeWorkspaceExportRepairCause } from "@paperclipai/shared";

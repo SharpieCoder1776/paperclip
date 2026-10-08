@@ -1,3 +1,4 @@
+import { acpxProfileActivity } from "../drivers/acpx/profile-activity.js";
 import { appendSemanticToolReceipt, readNativeSemanticReceipt, semanticInputSha256 } from "../drivers/semantic-tool-receipt.js";
 import { startRunnerToolBridge, type RunnerToolCall } from "../drivers/runner-tool-bridge.js";
 import { validatePrpStructuredRunResult } from "../protocol/replay-contract.js";
@@ -11,11 +12,52 @@ import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+describe("live sidecar pending request snapshots", () => {
+  it("attests current callback identities after the live status barrier without exposing forms", async () => {
+    const source = readFileSync(new URL("./acpx-runtime-sidecar.ts", import.meta.url), "utf8");
+    const start = source.indexOf('  if (request.command === "session.snapshot") {');
+    const end = source.indexOf('  if (request.command === "session.goal.get") {', start);
+    expect(start).toBeGreaterThan(0);
+    const inputs = new Map([['input-1', { turnId: 'turn-1', questionSet: { private: 'hidden form' } }]]);
+    const permissions = new Map([['permission-1', { turnId: 'turn-1', normalized: { private: 'hidden permission' } }]]);
+    const host = { identity: () => 'identity', binding: () => 'binding' };
+    const readStatus = vi.fn(async () => {
+      inputs.delete('input-1');
+      inputs.set('input-2', { turnId: 'turn-1', questionSet: { private: 'new hidden form' } });
+      return { live: true };
+    });
+    const run = new Function('requireHost', 'readSidecarHostStatusWithin', 'sanitizeRuntimeStatus', 'acpxProviderSessionIdentity', 'inputs', 'permissions', `
+      const request={command:"session.snapshot"}, tools=new Map(), runId="run-1", turnId="turn-1", sequence=7;
+      ${stripTypeScriptTypes(`async function readSnapshot() { ${source.slice(start, end)} }`)}
+      return readSnapshot;
+    `)(() => host, readStatus, (value: unknown) => value, () => ({ kind: 'acpx' }), inputs, permissions);
+    const snapshot = await run();
+    expect(readStatus).toHaveBeenCalledExactlyOnceWith(host);
+    expect(snapshot).toMatchObject({ runId: 'run-1', turnId: 'turn-1', pendingRuntimeRequests: [
+      { requestId: 'input-2', type: 'input', turnId: 'turn-1' },
+      { requestId: 'permission-1', type: 'permission', turnId: 'turn-1' },
+    ] });
+    expect(JSON.stringify(snapshot)).not.toContain('hidden');
+  });
+
+  it("rejects the snapshot when its provider status cannot be verified", async () => {
+    const source = readFileSync(new URL("./acpx-runtime-sidecar.ts", import.meta.url), "utf8");
+    const start = source.indexOf('  if (request.command === "session.snapshot") {');
+    const end = source.indexOf('  if (request.command === "session.goal.get") {', start);
+    const run = new Function('requireHost', 'readSidecarHostStatusWithin', 'sanitizeRuntimeStatus', `
+      const request={command:"session.snapshot"};
+      ${stripTypeScriptTypes(`async function readSnapshot() { ${source.slice(start, end)} }`)}
+      return readSnapshot;
+    `)(() => ({}), async () => { throw new Error('provider process lost'); }, (value: unknown) => value);
+    await expect(run()).rejects.toThrow('provider process lost');
+  });
+});
+
 import { deliverAcpxResponse } from "../drivers/acpx/response-delivery.js";
 import { normalizeAcpxPermission } from "../drivers/acpx/acp-permission-adapter.js";
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { resolveQualifiedAcpxProfile } from "../drivers/acpx/qualified-profiles.js";
-import { ACPX_SIDECAR_PROTOCOL_VERSION, stringifyAcpxSidecarFrame } from "../drivers/acpx/sidecar-protocol.js";
+import { ACPX_SIDECAR_PROTOCOL_VERSION, ACPX_SIDECAR_MAX_FRAME_BYTES, stringifyAcpxSidecarFrame, parseAcpxSidecarRequest, record, text } from "../drivers/acpx/sidecar-protocol.js";
 import { canonicalProviderEventsFromAcpxRuntimeEvent } from "../provider-events.js";
 import { createPiMessageProjection } from "../drivers/acpx/pi-message-projection.js";
 import { createCopilotToolEvidence } from "../drivers/acpx/copilot-tool-evidence.js";
@@ -53,10 +95,10 @@ describe("qualified ACPX runtime sidecar", () => {
     const end = source.indexOf("      const usage = persistedAcpxTurnUsage(", start);
     expect(start).toBeGreaterThan(0); expect(end).toBeGreaterThan(start);
     const emitted: unknown[] = [];
-    const project = new Function("persistedCursorUsageNotice", "validateAcpxRichEvent", "emit", "usageBefore", "usageAfter", "agent", `
-      const currentTurnId="turn", runtimeTurn={requestId:"request-1"}, openParams={agent};
+    const project = new Function("acpxProfileActivity", "validateAcpxRichEvent", "emit", "usageBefore", "usageAfter", "agent", `
+      const currentTurnId="turn", runtimeTurn={requestId:"request-1"}, openParams={agent}, activity=acpxProfileActivity(agent);
       ${stripTypeScriptTypes(source.slice(start, end))}
-    `).bind(null, persistedCursorUsageNotice, validateAcpxRichEvent, (...args: unknown[]) => emitted.push(args));
+    `).bind(null, acpxProfileActivity, validateAcpxRichEvent, (...args: unknown[]) => emitted.push(args));
     const before = { promptMessageIds: [], requestTokenUsage: {} };
     const after = { lastRequestId: "request-1", promptMessageIds: ["prompt-1"], requestTokenUsage: {}, cursorPromptUsage: {
       request_id: "request-1", prompt_message_id: "prompt-1", receipt: {
@@ -82,7 +124,7 @@ describe("qualified ACPX runtime sidecar", () => {
     const after = { lastRequestId: "request-1", requestTokenUsage: { "prompt-1": { input_tokens: 12, output_tokens: 3 } } };
     const project = new Function("readSidecarHostStatusWithin", "persistedCursorUsageNotice", "persistedAcpxTurnUsage", "acpxUsageEstimateNotice", "validateAcpxRichEvent", "emit", "diagnostic", `
       return (async () => {
-        const activeHost={}, currentTurnId="turn", runtimeTurn={requestId:"request-1"}, openParams={agent:"cursor"};
+        const activeHost={}, currentTurnId="turn", runtimeTurn={requestId:"request-1"}, openParams={agent:"cursor"}, activity={usageNotice:persistedCursorUsageNotice};
         const usageBefore={requestTokenUsage:{}}, sanitizeRuntimeEvent=value=>value, safeMessage=()=>"fixture error";
         ${stripTypeScriptTypes(source.slice(start, end))}
       })();
@@ -104,7 +146,7 @@ describe("qualified ACPX runtime sidecar", () => {
   it.each(["codex", "claude", "grok", "pi", "copilot", null])("preserves existing non-Cursor sidecar identity policy: %s", agent => {
     const source = readFileSync(new URL("./acpx-runtime-sidecar.ts", import.meta.url), "utf8");
     const start = source.indexOf("function stableProviderIdentity(");
-    const stable = new Function("createHash", "cursorToolIdentity", "openParams", `${stripTypeScriptTypes(source.slice(start, source.indexOf("\nfunction canonicalJson", start)))}; return stableProviderIdentity;`)(createHash, cursorToolIdentity, agent ? { agent } : null);
+    const stable = new Function("createHash", "acpxProfileActivity", "openParams", "initializedAgent", `${stripTypeScriptTypes(source.slice(start, source.indexOf("\nfunction canonicalJson", start)))}; return stableProviderIdentity;`)(createHash, acpxProfileActivity, agent ? { agent } : null, null);
     for (const kind of ["tool", "message"]) {
       for (const raw of ["safe-tool", "tool/1", "native\u0080tool", "native\u0085tool", "native\u009ftool", "x".repeat(161)]) {
         expect(stable(raw, kind)).toBe(raw);
@@ -118,7 +160,7 @@ describe("qualified ACPX runtime sidecar", () => {
   it.each(["tool-first", "permission-first"])("uses the same Cursor identity in actual sidecar tool and pending permission paths: %s", async order => {
     const source = readFileSync(new URL("./acpx-runtime-sidecar.ts", import.meta.url), "utf8");
     const identityStart = source.indexOf("function stableProviderIdentity(");
-    const stableIdentity = new Function("createHash", "cursorToolIdentity", "openParams", `${stripTypeScriptTypes(source.slice(identityStart, source.indexOf("\nfunction canonicalJson", identityStart)))}; return stableProviderIdentity;`)(createHash, cursorToolIdentity, { agent: "cursor" });
+    const stableIdentity = new Function("createHash", "acpxProfileActivity", "openParams", "initializedAgent", `${stripTypeScriptTypes(source.slice(identityStart, source.indexOf("\nfunction canonicalJson", identityStart)))}; return stableProviderIdentity;`)(createHash, acpxProfileActivity, { agent: "cursor" }, "cursor");
     const boundStart = source.indexOf("function boundRuntimeEventForNormalization(");
     const bound = new Function("boundedOptionalText", "stableProviderIdentity", "safeAcpxLocations", "openParams", "safeOutput",
       `${stripTypeScriptTypes(source.slice(boundStart, source.indexOf("\nfunction sanitizeRuntimeEvent", boundStart)))}; return boundRuntimeEventForNormalization;`)(
@@ -175,13 +217,13 @@ describe("qualified ACPX runtime sidecar", () => {
     const end = source.indexOf("\nfunction elicitationResponse(", start);
     const code = stripTypeScriptTypes(source.slice(start, end));
     const emitted: any[] = [], inputs = new Map();
-    const invoke = new Function("cursorPlanToolIdentity", "requireAcpxResponseDelivery", "emit", "inputs", `
+    const invoke = new Function("acpxProfileActivity", "requireAcpxResponseDelivery", "emit", "inputs", `
       const turnId="turn", openParams={agent:"cursor"}, initializedAgent="cursor", MAX_PENDING_INPUTS=16;
       let requestSequence=0;
       const stableRequestId=()=>"input-request";
       ${code}
       return waitForExtensionInput;
-    `)(cursorPlanToolIdentity, (context: any) => context.responseDelivery, (...args: any[]) => emitted.push(args), inputs);
+    `)(acpxProfileActivity, (context: any) => context.responseDelivery, (...args: any[]) => emitted.push(args), inputs);
     const abort = new AbortController();
     const pending = invoke("turn", { method: "cursor/create_plan", details: { toolCallId: "tool with spaces" }, questionSet: { schema: "paperclip.question_set.v1", questions: [] }, cancel: () => ({ cancelled: true }) }, { requestId: 0, signal: abort.signal, responseDelivery: Promise.resolve() });
     expect(emitted).toEqual([["runtime.input_requested", expect.objectContaining({ toolCallId: "tool with spaces", origin: { adapter: "acpx-runtime-sidecar", provider: "cursor", method: "cursor/create_plan" } }), "turn"]]);
@@ -190,18 +232,18 @@ describe("qualified ACPX runtime sidecar", () => {
   });
   it.each(["cursor", "copilot", "pi"])("binds native tool evidence to the active sidecar turn for %s", agent => {
     const source = readFileSync(new URL("./acpx-runtime-sidecar.ts", import.meta.url), "utf8");
-    const start = source.indexOf("    const evidenceFactory =");
+    const start = source.indexOf("    const activity = acpxProfileActivity(activeAgent);");
     const end = source.indexOf("    let usageBefore:", start);
     expect(start).toBeGreaterThan(0);
     const emitted: unknown[] = [];
-    const create = new Function("createCopilotToolEvidence", "createCursorToolEvidence", "validateAcpxRichEvent", "emit", "agent", `
+    const create = new Function("acpxProfileActivity", "validateAcpxRichEvent", "emit", "agent", `
       const activeHost = { identity: () => ({ backendSessionId: "session" }) };
       let host = activeHost, turnId = "turn", activeCopilotEvidence;
-      const currentTurnId = "turn", openParams = { agent, workingDirectory: "/workspace" };
+      const currentTurnId = "turn", activeAgent = agent, openParams = { agent, workingDirectory: "/workspace" };
       const diagnostic = () => {};
       ${stripTypeScriptTypes(source.slice(start, end))}
       return { evidence: toolEvidence, retire: () => { turnId = null; } };
-    `)(createCopilotToolEvidence, createCursorToolEvidence, validateAcpxRichEvent, (...args: unknown[]) => emitted.push(args), agent);
+    `)(acpxProfileActivity, validateAcpxRichEvent, (...args: unknown[]) => emitted.push(args), agent);
     const tool = { type: "tool_call", tag: "tool_call", toolCallId: "tool", kind: "execute", status: "pending", rawInput: { command: "printf private-value" } };
     create.evidence?.tool(tool);
     expect(emitted).toHaveLength(agent === "pi" ? 0 : 1);
@@ -432,8 +474,8 @@ describe("qualified ACPX runtime sidecar", () => {
     const wait = new Function("permissions", "openParams", "normalizeAcpxPermission", "emit",
       `let turnId = "turn-1", requestSequence = 0; const MAX_PENDING_INPUTS = 512;
        const stableRequestId = () => "request-1"; const requireAcpxResponseDelivery = c => c.responseDelivery;
-       return async function(activeTurnId, request, context) { const agent = openParams.agent, toolEvidence = undefined; ${source.slice(start, end)}`)(
-      permissions, { agent }, normalizeAcpxPermission, (_event: string, payload: { choices: Array<{ key: string }> }) => emitted.push(payload),
+       return async function(activeTurnId, agent, request, context, toolEvidence) { ${source.slice(start, end)}`)(
+      permissions, { agent }, normalizeAcpxPermission, (_event: string, payload: { choices: Array<{ key: string }>; origin: unknown }) => emitted.push(payload),
     );
     const abort = new AbortController();
     const pending = wait("turn-1", agent, { sessionId: "session", inferredKind: "edit", raw: {
@@ -1021,6 +1063,46 @@ describe("qualified ACPX runtime sidecar", () => {
     },
   );
 
+  it.each(["off", "low", "high", "max"])(
+    "accepts Pi thinking level %s through the actual session.open dispatcher",
+    async (piThinkingLevel) => {
+      const sidecar = startSidecar();
+      const model = "custom-provider/caller-selected-model";
+      sidecar.write(initializeRequest(1, "pi", model));
+      expect(await sidecar.next(frame => frame.id === 1)).toMatchObject({ ok: true });
+      sidecar.write({
+        protocolVersion: ACPX_SIDECAR_PROTOCOL_VERSION, id: 2, command: "session.open",
+        params: { runtimeDirectory: "/unused", workingDirectory: "/unused", normalizedSessionId: "pi-open",
+          agent: "pi", model, permissionMode: "deny-all", piThinkingLevel, systemInstructions: "Test instructions", tools: [] },
+      });
+      // The host's policy gate runs after parsing and before installation or
+      // credentials. This proves the real process crosses the open boundary
+      // without starting a provider or making a model request.
+      expect(await sidecar.next(frame => frame.id === 2)).toMatchObject({
+        ok: false, error: { message: "Pi admission requires an explicit task execution policy" },
+      });
+    },
+  );
+
+  it.each([
+    ["pi", { piThinkingLevel: "medium" }, "Pi thinking level"],
+    ["codex", { piThinkingLevel: "low" }, "only supported by Pi"],
+    ["pi", { piThinkingLevel: "low", unknownOption: true }, "unsupported field"],
+  ])("rejects invalid %s session.open fields before launch", async (agent, fields, message) => {
+    const sidecar = startSidecar();
+    const model = "caller-selected-model";
+    sidecar.write(initializeRequest(1, agent, model));
+    expect(await sidecar.next(frame => frame.id === 1)).toMatchObject({ ok: true });
+    sidecar.write({
+      protocolVersion: ACPX_SIDECAR_PROTOCOL_VERSION, id: 2, command: "session.open",
+      params: { runtimeDirectory: "/unused", workingDirectory: "/unused", normalizedSessionId: "invalid-open",
+        agent, model, permissionMode: "deny-all", tools: [], ...fields },
+    });
+    expect(await sidecar.next(frame => frame.id === 2)).toMatchObject({
+      ok: false, error: { message: expect.stringContaining(message) },
+    });
+  });
+
   it.each([
     ["cursor", "explicit-cursor-model"],
     ["copilot", "explicit-copilot-model"],
@@ -1104,7 +1186,7 @@ class SidecarProcess {
     this.#child = spawn(
       fileURLToPath(new URL("../../node_modules/.bin/tsx", import.meta.url)),
       [fileURLToPath(new URL("./acpx-runtime-sidecar.ts", import.meta.url))],
-      { stdio: ["pipe", "pipe", "pipe"] },
+      { stdio: ["pipe", "pipe", "pipe"], env: { PATH: process.env.PATH, LANG: "C.UTF-8" } },
     );
     let stdout = "";
     this.#child.stdout.setEncoding("utf8");

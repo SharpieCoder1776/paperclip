@@ -35,7 +35,7 @@ export async function provisionPackageRoot(entrypoint) {
     const expected = vendored ? "@paperclipai/server" : "@paperclipai/paperclip-runner";
     if (JSON.parse(bytes.toString()).name !== expected) throw new Error("Pi setup package identity does not match its layout");
   } finally { await handle.close(); }
-  return { root, manifest, cli };
+  return { root, manifest, cli, assetRoot: vendored ? resolve(cli, "..") : root };
 }
 async function verifiedInstallation(root, manifest) {
   const keys = ["PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT", "PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST"];
@@ -53,8 +53,8 @@ export async function provisionPi(entrypoint, checkCancelled = () => {}) {
   checkCancelled();
   const target = `${process.platform}-${process.arch}`;
   if (!Object.hasOwn(PI_DISTRIBUTION_CLOSURE_SHA256, target)) throw new Error(`Pi is not qualified for platform ${target}`);
-  const { root, manifest, cli } = await provisionPackageRoot(entrypoint);
-  const assets = join(root, "provider-assets"); const parent = join(assets, "pi");
+  const { root, manifest, cli, assetRoot } = await provisionPackageRoot(entrypoint);
+  const assets = join(assetRoot, "provider-assets"); const parent = join(assets, "pi");
   await containedDirectory(root, assets); await containedDirectory(root, parent);
   const lockPath = join(parent, `.setup-${target}.lock`);
   const lock = await open(lockPath, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW, 0o600);

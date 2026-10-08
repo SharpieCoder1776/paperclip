@@ -1581,6 +1581,15 @@ death is excluded because this exact ownership mechanism requires Linux pidfd.
 The Python helper calibration uses a synthetic transport and a real title-changing
 Node child; it proves fault ownership only, never paid Pi lifecycle behavior. Run
 it on native Linux with pinned Node on PATH: `python3 tests/runner-e2e/pi-provider-fault.test.py`.
+The calibration covers direct launch and the production bootstrap's held FD 3
+and FD 7 launches. Descriptor launch requires the held descriptor and wrapper
+executable to match the sealed snapshot Node inode; an argv alias alone grants
+no authority. Native suite definitions 6 retain the original live failures and
+require new provider-death qualification after this fixture correction.
+The fault helper validates the profile pin against canonical normalized closure
+entries, matching production admission. JSON formatting is not part of that pin.
+The same free suite checks canonical hash admission, malformed metadata and
+changed entries before any signal is sent.
 This adds one cell to the pending Pi Product matrix (26: 13 local, 13 Daytona);
 no qualification or live success is implied by discovery or oracle tests.
 
@@ -1594,8 +1603,17 @@ the durable browser form bridge. The existing five extended-harness journeys
 continue to prove semantic Paperclip questions and planning separately. Personal
 file persistence uses two fresh task runs and independent byte checks; restrictive
 denial uses one run and requires both a failed tool receipt and no file effect.
+The first managed-file API response is saved before its byte assertion, including
+when the final LF is missing. An incomplete remote terminal receipt retains only
+validated completion flags, watcher counts, process counts and target hashes.
+Raw RPC fields and file bodies are omitted. These diagnostic records do not
+change a failed byte or retirement grade and do not justify an unchanged retry.
 `human-permission-denial` additionally requires the exact browser Decline response,
 delivered native denial and independent file/process observation through retirement.
+The restrictive Daytona fixtures approve only the exact operator-published
+setup-file read after observer arming. They retain its public resolution and
+completed native read before testing the separate write permission. This setup
+approval does not change production policy or answer the tested write.
 See [the fixture contract](FIXTURES.md#pi-native-boundaries) for the exact oracles
 and the limits of reconnect evidence.
 
@@ -1685,7 +1703,10 @@ The observer watches registered targets (including transient create/delete), use
 workspace changes and the exact runner process plus descendants. The single
 controller-owned `.paperclip-runtime/paperclip-runner` subtree is excluded from
 user-file inventory and mutation counts: it holds the binary, provider pack,
-context and active runtime state. Its location and identity remain checked, and
+context, active runtime state, and sandbox GitHub launchers, upload locks and
+per-command configuration. Launcher restaging after controller recovery uses
+that same runtime path. SSH and local launcher locations remain separate.
+Its location and identity remain checked, and
 test targets cannot use it. This exclusion is recorded in evidence; it does not
 claim that runtime-internal writes are covered by the user-file oracle.
 
@@ -1696,6 +1717,25 @@ substitute for remote proof. The observed PRP environment identifier is retained
 as unverified metadata; the remote process is bound through the exact sandbox,
 run ID, lifecycle, process group and executable digest. Same-UID observer isolation
 is not an adversarial operating-system sandbox test.
+
+Directory notifications remain counted. A notification for an existing directory
+preserves completeness only when its device/inode still match an already
+registered recursive watch. Newly created directories, replacements, symlinks,
+and unknown notifications remain incomplete. Pi native definition v13 also gives
+memory content a single JSON representation, including the required final LF;
+the exact managed bytes and fresh-task readback assertions remain unchanged.
+
+Pi native definition v14 seeds `memory/.pi-e2e-parent.txt` through the public
+managed-file API before task admission. This creates the watched parent while
+leaving `memory/pi-native.txt` absent; the native write still has to supply all
+33 bytes and both turns must preserve the setup file. New or replaced watched
+directories still fail the oracle. Closed incompleteness reasons identify watch
+gaps or process ambiguity without retaining paths or raw errors. An incomplete
+receipt remains failed. A validated terminal receipt with a captured, retired
+process tree closes its observer without another RPC to a publicly deleted lease
+only when evidence is complete or its failures are known filesystem-watch gaps.
+Unknown causes, reused identities and live attached processes still need cleanup
+proof.
 
 `--suite rich-acp-warm-continuity` adds six explicit cells: all three providers on
 local and Daytona. Three browser-driven turns must preserve native session,
@@ -1917,6 +1957,65 @@ the evaluated checkout byte for byte. The skill snapshot and provider run eviden
 are retained privately alongside the grading checkpoints for failure diagnosis.
 Claude receives a fresh provider home and config directory inside the disposable
 workspace so a user's installed skill cannot shadow the managed skill under test.
+
+### Published-install Pi lane
+
+The 26 explicit Pi cells can run against an independently installed public CLI
+and server instead of the source CLI. Supply all four reviewed pins:
+`PAPERCLIP_RUNNER_E2E_INSTALLED_CLI` (canonical `paperclipai/dist/index.js`),
+`PAPERCLIP_RUNNER_E2E_INSTALLED_CLI_SHA256` (bare SHA-256),
+`PAPERCLIP_RUNNER_E2E_INSTALLED_SERVER_ROOT` (canonical resolved public server
+package root), and `PAPERCLIP_RUNNER_E2E_INSTALLED_SERVER_SHA256` (its
+`dist/index.js` SHA-256). The CLI must resolve that exact server dependency, with
+matching public package versions. Build/install provenance and the complete
+installed dependency/assets inventory remain separate required evidence; the
+entrypoint checks alone do not prove that closure.
+
+Run the explicit `paperclipai runtime setup pi` for that installation first.
+This lane rejects candidate flags, local/remote daemon overrides, provider asset
+or pack overrides, and Node injection. It launches the installed JavaScript CLI
+without a TypeScript loader, rechecks its pins on controller restart, and records
+`installed-cli-admission.json` in private attempt evidence. It supports only the
+explicit Pi extended, native, controls and warm suites, which require none of the
+source-only response barriers. Cursor/Copilot qualification gates stay intact.
+Pi's historical `qualificationCandidate` fixture selector remains a roster key;
+it no longer grants an opt-in when the source Pi declaration admits normal use.
+
+Installed Pi Daytona cells also require the published plugin fixture inputs
+`PAPERCLIP_RUNNER_E2E_INSTALLED_DAYTONA_PLUGIN` (canonical package root),
+`PAPERCLIP_RUNNER_E2E_INSTALLED_DAYTONA_PLUGIN_AUTHORITY` (canonical JSON file),
+and `PAPERCLIP_RUNNER_E2E_INSTALLED_DAYTONA_PLUGIN_AUTHORITY_SHA256`.
+The authority schema `paperclip.e2e.installed-daytona-plugin/v1` pins a canonical
+`graphRoot` and four public packages (`plugin`, `sdk`, `shared`, `daytona`).
+Each has `root`, `packageSha256`, `entry`, and `entrySha256`; `plugin` also has
+`manifestSha256` and `workerSha256`. Roots must be the named packages beneath
+that graph's `node_modules`. The fixture verifies compiled public exports,
+exact dependency versions, resolved package identities, and file pins before
+launch and again immediately before the ordinary `/api/plugins/install` request.
+It records `installed-daytona-plugin-admission.json` privately. Missing pins in
+installed Daytona mode fail; they never select the source plugin as a fallback.
+Local cells need no Daytona plugin. Source-development lanes retain their
+existing fixture path. These entrypoint checks do not replace the separately
+required tar provenance and complete installed dependency inventory audit.
+The fixture inputs do not reach the production server environment.
+
+Before a paid installed local cell, use the same launcher and WebServer chain
+without provider work:
+
+```sh
+node --import ./cli/node_modules/tsx/dist/loader.mjs \
+  tests/runner-e2e/launch.ts --installed-startup-only \
+  --id extended-harnesses.runner-acpx-pi.local.hello-complete \
+  --max-automatic-retries 0
+```
+
+This mode requires the reviewed installed CLI pins, rejects provider credential
+inputs, skips local credential-file loading, and runs only health, browser UI,
+and zero-company checks. It retains separate private startup evidence and cannot
+produce a passing provider case. Existing process, IPC, and scratch cleanup stay
+in force. The installed lane invokes Playwright's public JavaScript bin directly
+with the current Node; pnpm's generated bin shim would inject `NODE_PATH` into
+the WebServer. Arbitrary ambient `NODE_OPTIONS` and `NODE_PATH` remain rejected.
 
 
 ## Production hiring templates

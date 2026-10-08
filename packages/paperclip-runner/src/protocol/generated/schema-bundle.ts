@@ -1170,9 +1170,37 @@ export const providerDescriptorSchema = {
     },
     "turnControls": {
       "$ref": "#/$defs/turnControls"
+    },
+    "piThinkingLevel": {
+      "enum": [
+        "off",
+        "low",
+        "high",
+        "max"
+      ]
     }
   },
   "allOf": [
+    {
+      "if": {
+        "required": [
+          "piThinkingLevel"
+        ]
+      },
+      "then": {
+        "properties": {
+          "provider": {
+            "const": "acpx"
+          },
+          "agent": {
+            "const": "pi"
+          }
+        },
+        "required": [
+          "agent"
+        ]
+      }
+    },
     {
       "oneOf": [
         {

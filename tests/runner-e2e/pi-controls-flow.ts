@@ -8,6 +8,7 @@ import { createDeniedTargetFixture, exists, observeRunProcesses } from "./copilo
 import { assertCopilotRemoteRetirement, copilotRemoteDeniedSample, prepareCopilotRemoteAction, type CopilotRemoteBootstrap, type CopilotRemoteFixture, type CopilotRemoteSnapshot } from "./copilot-protection-evidence.js";
 import { assertActiveStopRetirement, readActiveStopRemoteRetirement, readActiveStopCaller, type ActiveStopCaller, type ActiveStopRemoteObservation } from "./native-active-stop-evidence.js";
 import { assertSamePiPending, observePiControlPending, readPiStopSettlement, readPiSteeringAcknowledgement, readPiSteeringSettlement, type PiControlPending, type PiControlScope, type PiControlState } from "./pi-controls-evidence.js";
+import { approvePiBootstrapRead, type PiBootstrapApproval } from "./pi-bootstrap-permission.js";
 import { piNativeFinish } from "./pi-native-cases.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { MatrixExecution } from "./types.js";
@@ -51,6 +52,7 @@ export async function runPiControlsFlow(input: {
     || !["pending-permission-stop", "same-turn-steering"].includes(execution.task.id)) throw new Error("Unknown Pi control case");
   const stopCase = execution.task.id === "pending-permission-stop", remote = execution.environment.id === "daytona";
   if ((!remote && execution.environment.id !== "local") || (remote && !input.remoteBootstrap)) throw new Error("Pi controls require an isolated admitted environment");
+  let bootstrapApproval: PiBootstrapApproval | undefined;
   const checks: Check[] = []; let issue: Row = {}, runs: Row[] = [], events: Row[] = [];
   const check = (id: string, passed: boolean, detail: string) => { checks.push({ id, passed, detail }); expect(passed, detail).toBe(true); };
   const name = `pi-control-${nonce}.txt`, local = remote ? undefined : await createDeniedTargetFixture(input.workspacePath, name), target = local?.targetRelativePath ?? name;
@@ -62,9 +64,13 @@ export async function runPiControlsFlow(input: {
   let steered: { pending: PiControlPending; commentId: string; queueId: string; marker: string } | undefined;
   let completed = false;
   const observeProcesses = () => {
+    // Controller timestamps describe remote launch annotations, not Linux
+    // process birth. Daytona identity is checked in the bound remote snapshots
+    // through PID, start ticks and boot ID, including the retirement seal.
+    if (!observer) return;
     const run = runs[0], authority = run?.processPid ? { pid: run.processPid, groupId: run.processGroupId, startedAt: run.processStartedAt, runId: run.id } : undefined;
     if (authority) { const key = JSON.stringify(authority); if (processIdentity && processIdentity !== key) processError = true; processIdentity ??= key; }
-    if (observer) processes = observer.sample(authority);
+    processes = observer.sample(authority);
   };
   const load = async (): Promise<PiControlState> => {
     if (issue.id) issue = await api.get<Row>(`/api/issues/${issue.id}`);
@@ -72,7 +78,7 @@ export async function runPiControlsFlow(input: {
     runs = await Promise.all(list.map(run => api.get<Row>(`/api/heartbeat-runs/${run.id}`)));
     if (runs.length > 1) throw new Error("Stopped waiting for Pi controls: extra provider run");
     events = runs[0] ? await collectRunEvents<Row>((afterSeq, limit) => api.get(`/api/heartbeat-runs/${runs[0]!.id}/events?afterSeq=${afterSeq}&limit=${limit}`)) : [];
-    observeProcesses(); input.observe(issue, runs); return { run: runs[0] ?? {}, issue, events };
+    observeProcesses(); input.observe(issue, runs); return { run: runs[0] ?? {}, issue, events, bootstrapApproval };
   };
   const scope = (): PiControlScope => ({ companyId: fixtures.company.id, issueId: issue.id, runId: runs[0]!.id, target });
   const readPresentation = async (state: PiControlState) => {
@@ -140,8 +146,9 @@ export async function runPiControlsFlow(input: {
     check("explicit-per-turn-policy", configured.adapterConfig?.acpxPermissionMode === "approve-reads" && configured.adapterConfig?.lifecycleMode === "per_turn", "Native write requires a human decision before startup");
     const project = await api.post<Row>(`/api/companies/${fixtures.company.id}/projects`, { name: `Pi controls ${nonce}`, executionWorkspacePolicy: { enabled: true, defaultMode: "shared_workspace", sharedWorkspaceConcurrency: "serialize", allowIssueOverride: false, environmentId: fixtures.environment.id, workspaceStrategy: { type: "project_primary" } }, workspace: { name: "Primary", sourceType: "local_path", cwd: input.workspacePath, isPrimary: true } });
     if (!remote) await sample("before-request");
-    await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title: execution.task.buildTitle(nonce), prompt: remote ? input.remoteBootstrap!.prompt(nonce) : prompt, workMode: "standard", projectName: project.name });
-    issue = (await pollUntil({ label: "browser-created Pi control task", deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(i => i.title === execution.task.buildTitle(nonce)), accept: Boolean }))!;
+    const createdTask = await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title: execution.task.buildTitle(nonce), prompt: remote ? input.remoteBootstrap!.prompt(nonce) : prompt, workMode: "standard", projectName: project.name, requireExplicitTitle: true });
+    issue = await api.get<Row>(`/api/issues/${createdTask.issueId}`);
+    check("created-task-identity", issue.id === createdTask.issueId && issue.companyId === fixtures.company.id && issue.assigneeAgentId === fixtures.agent.id, "Creation response binds the exact company-scoped assigned task before native control");
     if (remote) {
       await pollUntil({ label: "Pi control remote bootstrap", deadlineAt: input.deadlineAt, load, accept: state => state.run.status === "running" });
       const bound = await input.remoteBootstrap!.bindAndRelease({ issueId: issue.id, runId: runs[0]!.id, targets: [target], actionPrompt: async value => {
@@ -151,12 +158,18 @@ export async function runPiControlsFlow(input: {
         await input.evidence("pi-control-before-request-remote.json", baseline); return prepared.prompt;
       } });
       if (bound !== fixture) throw new Error("Pi remote action identity changed");
+      bootstrapApproval = await approvePiBootstrapRead({ api, fixture: bound, companyId: fixtures.company.id, issueId: issue.id, runId: runs[0]!.id,
+        deadlineAt: input.deadlineAt, load, evidence: input.evidence });
     }
     await pollUntil({ label: "Pi unanswered native write", deadlineAt: input.deadlineAt, intervalMs: 200,
       load: async () => { const state = await load(); if (["failed", "timed_out", "cancelled", "succeeded"].includes(state.run.status)) throw new Error("Stopped waiting for Pi unanswered native write: no active pending permission"); return state; },
       accept: state => { observePiControlPending({ ...state, scope: scope() }); return true; } });
     await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
-    const card = page.getByTestId("task-chat-runtime-request").filter({ visible: true });
+    // A resolved bootstrap read remains visible in the transcript. Only the
+    // pending permission has decision buttons; the public event oracle and
+    // browser POST below still bind the decision to the exact write request.
+    const card = page.getByTestId("task-chat-runtime-request").filter({ visible: true })
+      .filter({ has: page.getByRole("button", { name: "Deny", exact: true }) });
     await expect(card).toHaveCount(1); await expect(card.getByRole("button", { name: "Deny", exact: true })).toBeEnabled();
     await input.capture("pending-permission", "Pi write waits for a human decision", "pending-permission.png"); await sample("pending");
     if (stopCase) {
@@ -172,10 +185,16 @@ export async function runPiControlsFlow(input: {
       await input.evidence("pi-control-pending.json", pending);
       const marker = `PI-STEER-${randomBytes(16).toString("hex")}`;
       const message = `After the actual native denial, complete this negative test. Do not write or invoke any other native tool. ${piNativeFinish(marker)}`;
+      const commentRoutes = new Set([issue.id, issue.identifier].filter(Boolean).map(id => `/api/issues/${id}/comments`));
+      const submitted = page.waitForRequest(request => commentRoutes.has(new URL(request.url()).pathname) && request.method() === "POST");
       await submitTaskReply(page, message);
+      // The production rich-text editor serializes plain input as Markdown.
+      // Bind the queued comment to the exact body actually sent by the browser.
+      const submittedBody = (await submitted).postDataJSON()?.body;
+      check("browser-steering-content", typeof submittedBody === "string" && submittedBody.startsWith("After the actual native denial, complete this negative test. Do not write or invoke any other native tool. ") && submittedBody.includes(marker), "Browser submitted the hidden instruction while permission remains pending");
       const queue = await pollUntil({ label: "Pi browser comment queued for steering", deadlineAt: input.deadlineAt, intervalMs: 200,
-        load: () => api.get<Row>(`/api/issues/${issue.id}/queued-comments`), accept: q => q.steeringDisposition === "available" && q.entries?.some((entry: Row) => entry.comment.body === message) });
-      const entries = queue.entries.filter((entry: Row) => entry.comment.body === message);
+        load: () => api.get<Row>(`/api/issues/${issue.id}/queued-comments`), accept: q => q.steeringDisposition === "available" && q.entries?.some((entry: Row) => entry.comment.body === submittedBody) });
+      const entries = queue.entries.filter((entry: Row) => entry.comment.body === submittedBody);
       check("one-browser-steering-message", entries.length === 1 && queue.entries.length === 1 && queue.targetRunId === pending.scope.runId, "One browser-originated comment targets the pending run");
       const commentId = entries[0].comment.id, queueId = queue.queueId;
       assertSamePiPending(pending, observePiControlPending({ ...await load(), scope: scope() }));
@@ -183,8 +202,11 @@ export async function runPiControlsFlow(input: {
       const route = `/api/issues/${issue.id}/queued-comments/${commentId}/steer`;
       const posted = page.waitForRequest(request => new URL(request.url()).pathname === route && request.method() === "POST");
       await page.getByTestId(`task-chat-queued-steer-${commentId}`).click();
-      const body = (await posted).postDataJSON();
+      const steeringRequest = await posted;
+      const body = steeringRequest.postDataJSON();
       check("exact-browser-steer", body.queueId === queueId && body.revision === queue.revision && body.targetRunId === pending.scope.runId, "Browser steers the exact queued comment into the active run");
+      const response = await steeringRequest.response();
+      if (!response?.ok()) throw new Error(`Pi native steering rejected: HTTP ${response?.status() ?? "missing"}`);
       steered = { pending, commentId, queueId, marker };
       await pollUntil({ label: "Pi same-turn steering acknowledgement", deadlineAt: input.deadlineAt, intervalMs: 200, load,
         accept: state => { assertSamePiPending(pending, observePiControlPending({ ...state, scope: scope() })); readPiSteeringAcknowledgement({ ...state, ...steered! }); return true; } });

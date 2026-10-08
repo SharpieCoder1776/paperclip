@@ -1,3 +1,4 @@
+import type { RestartRunnerIdentity } from "./process-tree-owner.js";
 import { observeRunProcesses, createDeniedTargetFixture, bindDeniedTargetPrompt } from "./copilot-local-fixtures.js";
 import { hasDeliveredPiDenial, piPermissionRequests, hasPiRemoteRetirement, hasUnchangedPiRemoteTarget } from "./pi-native-evidence.js";
 import { randomBytes } from "node:crypto";
@@ -7,11 +8,12 @@ import { expect, type Page } from "@playwright/test";
 import { pollUntil, type RunnerApi } from "./api.js";
 import { collectRunEvents } from "./run-observations.js";
 import { createTaskThroughUi } from "./user-actions.js";
-import { gradePiNativeAnswers, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, piNativeFinish } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasPiNativeMemoryRead, hasFailedPiWrite, hasPiCrossRootDenial, PI_NATIVE_MEMORY_PATH, PI_NATIVE_MEMORY_PARENT_SEED_PATH, PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, piNativeFinish, piNativeMemoryPrompt } from "./pi-native-cases.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { MatrixExecution } from "./types.js";
 
-import type { RemoteNativeFixture, RemoteNativeSnapshot } from "./remote-native-fixtures.js";
+import { remoteNativeIncompleteTerminalEvidence, type RemoteNativeFixture, type RemoteNativeSnapshot } from "./remote-native-fixtures.js";
+import { approvePiBootstrapRead, withoutApprovedPiBootstrapRequests, type PiBootstrapApproval } from "./pi-bootstrap-permission.js";
 import { runPiPendingProviderDeath, PI_DEATH_MARKER } from "./pi-native-provider-death-flow.js";
 import { runPiPendingControllerRestart } from "./pi-native-restart-flow.js";
 
@@ -25,7 +27,7 @@ type Check = { id: string; passed: boolean; detail: string };
 
 export async function runPiNativeFlow(input: {
   page: Page; api: RunnerApi; fixtures: LiveFixtureValues; execution: MatrixExecution; nonce: string;
-  workspacePath: string; deadlineAt: number; restart(): Promise<void>;
+  workspacePath: string; deadlineAt: number; restart(preserveRunner?: RestartRunnerIdentity): Promise<void>;
   observe(issue: Row, runs: Row[]): void;
   capture(id: string, label: string, file: string): Promise<void>;
   evidence(name: string, data: unknown): Promise<void>;
@@ -37,11 +39,26 @@ export async function runPiNativeFlow(input: {
   if (!["local", "daytona"].includes(execution.environment.id) || execution.profile.qualificationCandidate !== "pi") throw new Error("Pi native fixtures require an isolated Pi candidate");
   if (remote && (!input.remoteBootstrap || !input.registerCleanupAssertion)) throw new Error("Pi Daytona requires owned remote bootstrap and pre-delete retirement proof");
   if (remote && execution.task.id === "restrictive-denial") throw new Error("Pi deny-all cannot read the native action-file bootstrap; remote auto-denial remains unsupported");
+  let bootstrapApproval: PiBootstrapApproval | undefined;
   let currentRemote: RemoteNativeFixture | undefined, currentBaseline: RemoteNativeSnapshot | undefined;
   let remoteSequence = 0;
+  const retainedIncompleteTerminals = new Set<number>();
+  async function retainIncompleteTerminal(fixture: RemoteNativeFixture, ordinal: number, error: unknown) {
+    const snapshot = remoteNativeIncompleteTerminalEvidence(error);
+    if (!snapshot || retainedIncompleteTerminals.has(ordinal)) return;
+    try {
+      await input.evidence(`pi-remote-${ordinal}-incomplete-terminal.json`, { binding: fixture.binding, snapshot, passed: false });
+      retainedIncompleteTerminals.add(ordinal);
+    } catch {
+      // The caller must rethrow the original qualification error. Leave this
+      // ordinal unretained so cleanup can still try to save its diagnostic.
+    }
+  }
   async function finishRemote(label: string) {
     if (!currentRemote) throw new Error("Missing exact owned remote fixture");
-    const snapshot = await currentRemote.finish();
+    let snapshot: RemoteNativeSnapshot;
+    try { snapshot = await currentRemote.finish(); }
+    catch (error) { await retainIncompleteTerminal(currentRemote, remoteSequence, error); throw error; }
     await input.evidence(`pi-remote-${remoteSequence}-${label}.json`, { binding: currentRemote.binding, baseline: currentBaseline, snapshot });
     if (!hasPiRemoteRetirement(snapshot)) throw new Error("Pi remote provider retirement is unproven; sandbox deletion is not proof");
     return snapshot;
@@ -69,9 +86,10 @@ export async function runPiNativeFlow(input: {
   async function create(title: string, prompt: string | ((fixture: RemoteNativeFixture) => string), options: { targets?: string[]; crossRoot?: { initialText: string } } = {}) {
     const previous = new Set(runs.map(run => run.id));
     const actualPrompt = remote ? input.remoteBootstrap!.prompt(`${nonce}-${++remoteSequence}`) : typeof prompt === "string" ? prompt : (() => { throw new Error("Local prompt cannot depend on remote fixture"); })();
-    await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title, prompt: actualPrompt, workMode: "standard", projectName: project.name });
-    const found = await pollUntil({ label: title, deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(row => row.title === title), accept: Boolean });
-    if (!found) throw new Error("Browser-created Pi task is absent"); issue = found; input.observe(issue, runs);
+    const createdTask = await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title, prompt: actualPrompt, workMode: "standard", projectName: project.name, requireExplicitTitle: true });
+    issue = await api.get<Row>(`/api/issues/${createdTask.issueId}`);
+    check("created-task-identity", issue.id === createdTask.issueId && issue.companyId === fixtures.company.id && issue.assigneeAgentId === fixtures.agent.id, "Creation response binds the exact company-scoped assigned task before native action");
+    input.observe(issue, runs);
     await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
     if (remote) {
       const state = await pollUntil({ label: "Pi remote bootstrap native run", deadlineAt: input.deadlineAt, load, reject: rejectFailure, accept: value => value.runs.filter(run => !previous.has(run.id)).length === 1 });
@@ -81,6 +99,7 @@ export async function runPiNativeFlow(input: {
       const fixture = currentRemote, ordinal = remoteSequence;
       input.registerCleanupAssertion!(async () => {
         try { const snapshot = await fixture.finish(); const passed = hasPiRemoteRetirement(snapshot); await input.evidence(`pi-remote-${ordinal}-retirement.json`, { binding: fixture.binding, snapshot, passed }); if (!passed) throw new Error("Pi remote retirement proof incomplete"); return [{ id: `remote-retirement-${ordinal}`, passed, detail: "Independent remote observer sealed exact run retirement before public lease deletion" }]; }
+        catch (error) { await retainIncompleteTerminal(fixture, ordinal, error); throw error; }
         finally { await fixture.close(); }
       });
     }
@@ -112,7 +131,7 @@ export async function runPiNativeFlow(input: {
       await create(execution.task.buildTitle(nonce), execution.task.buildPrompt(nonce), { targets: ["pi-native-restart-answer.json"] });
       checks.push(...await runPiPendingControllerRestart({
         page, companyId: fixtures.company.id, deadlineAt: input.deadlineAt, load, events,
-        restart: input.restart, settle: () => settle(1), capture: input.capture, evidence: input.evidence,
+        preserveLocalRunner: !remote, restart: input.restart, settle: () => settle(1), capture: input.capture, evidence: input.evidence,
         readProof: async () => {
           if (remote) await finishRemote("native-restart-final");
           return JSON.parse(await readWorkspace("pi-native-restart-answer.json"));
@@ -149,29 +168,42 @@ export async function runPiNativeFlow(input: {
       await input.evidence("pi-native-typed-proof.json", { proof, interactions: final.interactions, events: await events(runs[0]!.id) });
     } else if (execution.task.id === "agent-files-fresh-run") {
       const retained = randomBytes(16).toString("hex"); const outside = resolve(input.workspacePath, "..", `pi-unassigned-${nonce}.txt`);
+      // The remote oracle cannot cover writes that race new-directory watch
+      // installation. Materialize only the parent before provider admission via
+      // the normal managed-file API; the memory target remains absent.
+      const seed = await api.request.put(`/api/agents/${fixtures.agent.id}/instructions-bundle/file`, {
+        data: { path: PI_NATIVE_MEMORY_PARENT_SEED_PATH, content: PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, baseHash: null },
+      });
+      if (!seed.ok()) throw new Error(`Pi memory parent setup failed (${seed.status()})`);
+      check("memory-parent-seeded", (await seed.json()).content === PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, "Public managed-file setup created the watched memory parent before task admission");
       if (!remote) check("unassigned-initially-absent", await absent(outside), "The isolated cross-root marker did not already exist");
-      const prompt = (outsidePath: string) => `${execution.task.buildPrompt(retained)}\nBefore finishing, attempt native write exactly once to ${JSON.stringify(outsidePath)} with content forbidden. This intentionally unassigned root must be denied. Never use bash or another operation to work around its failure.`;
+      const prompt = (outsidePath: string) => piNativeMemoryPrompt(retained, outsidePath);
       await create(execution.task.buildTitle(nonce), remote ? fixture => { if (!fixture.outsideTarget) throw new Error("Remote cross-root target is absent"); return prompt(fixture.outsideTarget); } : prompt(outside), { crossRoot: { initialText: `unchanged-${randomBytes(16).toString("hex")}` } });
       await settle(1);
       const personal = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       const firstEvents = await events(runs[0]!.id);
-      check("registered-file-saved", personal.content === `${retained}\n`, "Public managed-file API contains the exact native-write bytes");
+      await input.evidence("pi-agent-files-first-save.json", { personal, run: runs[0], events: firstEvents });
+      check("native-memory-write-verification", hasPiNativeMemoryRead(firstEvents, retained, remote ? { agentId: fixtures.agent.id, runId: runs[0]!.id } : undefined), "One completed native read verified the write, with no shell execution");
+      check("registered-file-saved", gradePiNativeMemory(personal.content, retained), "Public managed-file API contains the exact native-write bytes");
       check("stopped-save-receipt", firstEvents.some(row => row.eventType === "instruction_save" && row.payload?.state === "saved"), "Provider stop produced a durable file-save receipt");
       const crossRootIntact = remote ? hasUnchangedPiRemoteTarget(currentBaseline, await finishRemote("cross-root-final"), "@cross-root") : await absent(outside);
       check("cross-root-denied", crossRootIntact && hasPiCrossRootDenial(firstEvents), "A single native write recorded the exact cross-root denial reason and the isolated target remains unchanged");
-      await input.evidence("pi-agent-files-first-save.json", { personal, run: runs[0], events: firstEvents });
       await input.restart();
       await create(`Pi read persisted memory ${nonce}`, [
-        `Use native read to read ${PI_NATIVE_MEMORY_PATH} under the fresh registered AGENT_HOME. Read its exact current bytes; do not infer them from another task, conversation, or history.`,
-        "Use native write to copy those exact bytes into pi-agent-memory-proof.txt in the task workspace. This is an internal assertion file, not a deliverable. Do not change personal memory.",
+        `Use native read once with path <AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}. Replace <AGENT_HOME> with the canonical absolute directory from this turn\'s runtime instructions. Read the complete file without offset or limit; do not infer its contents from another task, conversation, or history.`,
+        "Use native write to copy those exact bytes into pi-agent-memory-proof.txt in the task workspace. This is an internal assertion file, not a deliverable. Do not change personal memory or other agent files. Do not use bash or the instructions API.",
         piNativeFinish(execution.task.buildVisibleMarker(nonce)),
       ].join("\n"), { targets: ["pi-agent-memory-proof.txt"] });
       await settle(2);
       if (remote) await finishRemote("memory-readback-final");
-      check("fresh-run-readback", await readWorkspace("pi-agent-memory-proof.txt") === `${retained}\n`, "A new issue after server restart copied the undisclosed saved agent-file bytes");
+      check("fresh-run-readback", gradePiNativeMemory(await readWorkspace("pi-agent-memory-proof.txt"), retained), "A new issue after server restart copied the undisclosed saved agent-file bytes");
       const current = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PATH)}`);
       check("persistent-bytes-unchanged", current.content === personal.content, "Fresh-run readback preserved the saved managed bytes");
-      await input.evidence("pi-agent-files-fresh-read.json", { current, runs, events: await events(runs[1]!.id) });
+      const parentSeed = await api.get<Row>(`/api/agents/${fixtures.agent.id}/instructions-bundle/file?path=${encodeURIComponent(PI_NATIVE_MEMORY_PARENT_SEED_PATH)}`);
+      check("memory-parent-seed-unchanged", parentSeed.content === PI_NATIVE_MEMORY_PARENT_SEED_CONTENT, "Both native turns preserved the parent setup file");
+      const freshEvents = await events(runs[1]!.id);
+      await input.evidence("pi-agent-files-fresh-read.json", { current, runs, events: freshEvents });
+      check("native-memory-fresh-read", hasPiNativeMemoryRead(freshEvents, retained, remote ? { agentId: fixtures.agent.id, runId: runs[1]!.id } : undefined), "The fresh run used one completed native read, with no shell execution");
     } else if (execution.task.id === "human-permission-denial") {
       if (!input.registerCleanupAssertion) throw new Error("Pi human denial requires post-retirement cleanup assertions");
       const agent = await api.get<Row>(`/api/agents/${fixtures.agent.id}`);
@@ -201,20 +233,27 @@ export async function runPiNativeFlow(input: {
       });
       if (!remote) check("human-target-initially-absent", await absent(path), "Independent target is absent before provider work");
       await create(execution.task.buildTitle(nonce), localTarget ? bindDeniedTargetPrompt(execution.task.buildPrompt(nonce), "pi-human-denied.txt", target) : execution.task.buildPrompt(nonce), { targets: [target] });
+      if (remote) bootstrapApproval = await approvePiBootstrapRead({ api, fixture: currentRemote!, companyId: fixtures.company.id, issueId: issue.id, runId: runs[0]!.id,
+        deadlineAt: input.deadlineAt, load: async () => { await load(); return { run: runs[0]!, issue, events: await events(runs[0]!.id) }; }, evidence: input.evidence });
       if (remote) check("human-target-initially-absent", currentBaseline?.targets[target]?.absent === true && currentBaseline.targets[target]!.complete, "Remote watcher was armed before action publication with an absent target");
       const pending = await pollUntil({ label: "Pi native browser permission", deadlineAt: input.deadlineAt, load: async () => { const state = await load(); processes = observe(); return { ...state, events: state.runs.length === 1 ? await events(state.runs[0]!.id) : [] }; }, reject: rejectFailure,
-        accept: state => state.runs.length === 1 && piPermissionRequests(state.events, state.runs[0]!.id).length === 1 });
-      const native = piPermissionRequests(pending.events, pending.runs[0]!.id)[0]!;
+        accept: state => state.runs.length === 1 && piPermissionRequests(withoutApprovedPiBootstrapRequests(state.events, bootstrapApproval), state.runs[0]!.id).length === 1 });
+      const native = piPermissionRequests(withoutApprovedPiBootstrapRequests(pending.events, bootstrapApproval), pending.runs[0]!.id)[0]!;
       const identity = { runId: pending.runs[0]!.id, turnId: native.event.turnId, requestId: native.request.requestId, toolCallId: native.request.details.toolCallId, target };
       check("human-target-pending-absent", remote ? (await currentRemote!.snapshot("permission-pending")).targets[target]?.absent === true : await absent(path), "Pending native write has no file effect");
       await page.reload();
       const before = await events(identity.runId);
       check("human-permission-reconnect", piPermissionRequests(before, identity.runId).some(value => value.request.requestId === identity.requestId) && !before.some(row => row.payload?.prpEvent?.payload?.requestId === identity.requestId && ["runtime_request.resolved", "runtime_request.expired", "runtime_request.cancelled"].includes(row.eventType)), "Reload retained the exact unanswered native permission");
-      const card = page.getByTestId("task-chat-runtime-request").filter({ visible: true }); await expect(card).toHaveCount(1);
+      const declineLabel = native.request.choices.find((choice: Row) => choice.key === "decline").label;
+      // Resolved setup-read receipts remain visible but have no decision
+      // buttons. Require one actionable card and verify its exact POST below.
+      const card = page.getByTestId("task-chat-runtime-request").filter({ visible: true })
+        .filter({ has: page.getByRole("button", { name: declineLabel, exact: true }) });
+      await expect(card).toHaveCount(1);
       await input.capture("pi-human-denial", "Pi native permission awaiting browser denial", "pi-human-denial.png");
       const route = `/api/heartbeat-runs/${identity.runId}/runtime-requests/${encodeURIComponent(identity.requestId)}/resolve`;
       const posted = page.waitForRequest(request => new URL(request.url()).pathname === route && request.method() === "POST");
-      await card.getByRole("button", { name: native.request.choices.find((choice: Row) => choice.key === "decline").label, exact: true }).click();
+      await card.getByRole("button", { name: declineLabel, exact: true }).click();
       const response = (await posted).postDataJSON();
       check("human-exact-browser-decline", response.turnId === identity.turnId && response.requestKind === "permission_approval" && response.resolution?.action === "decline", "Actual browser POST declines this run, turn and request");
       const final = await settle(1), runEvents = await events(identity.runId);

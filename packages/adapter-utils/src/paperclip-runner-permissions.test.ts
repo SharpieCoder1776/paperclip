@@ -13,7 +13,7 @@ import {
 describe("Paperclip Runner permission defaults", () => {
   it("holds intermediate Pi admission and preserves upstream Cursor qualification", () => {
     expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "pi"))
-      .toMatchObject({ qualified: false, credentialEnvironment: ["OPENROUTER_API_KEY"] });
+      .toMatchObject({ qualified: false, credentialEnvironment: ["OPENROUTER_API_KEY", "OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"] });
     expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "copilot")?.qualified).toBe(false);
     expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "cursor")?.qualified).toBe(true);
   });

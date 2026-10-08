@@ -56,6 +56,8 @@ describe("ACPX launch environment", () => {
       LC_ALL: "C.UTF-8",
       HTTPS_PROXY: "https://proxy.example",
       OPENROUTER_API_KEY: "openrouter-secret",
+      OPENAI_API_KEY: "openai-secret",
+      ANTHROPIC_API_KEY: "anthropic-secret",
     });
     expect(codex.env).not.toHaveProperty("PAPERCLIP_NATIVE_MCP_TOKEN");
     expect(codex.env).not.toHaveProperty(
@@ -84,7 +86,7 @@ describe("ACPX launch environment", () => {
     };
     expect(createSanitizedAcpxSpawnInput(source, "cursor").env).toEqual({ CURSOR_API_KEY: "cursor-key", CURSOR_AUTH_TOKEN: "cursor-token" });
     expect(createSanitizedAcpxSpawnInput(source, "copilot").env).toEqual({ COPILOT_GITHUB_TOKEN: "copilot-key" });
-    expect(createSanitizedAcpxSpawnInput(source, "pi").env).toEqual({});
+    expect(createSanitizedAcpxSpawnInput(source, "pi").env).toEqual({ COPILOT_GITHUB_TOKEN: "copilot-key" });
   });
 
   it.each([

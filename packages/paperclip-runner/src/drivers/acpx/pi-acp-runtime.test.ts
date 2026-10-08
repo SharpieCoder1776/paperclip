@@ -259,6 +259,19 @@ describe("Pi ACP bridge", () => {
     } });
   });
 
+  it("preserves usage without reporting an acknowledged cancellation as a service failure", () => {
+    const usage = new PiTurnUsage();
+    usage.accept({ role: "assistant", timestamp: 1, stopReason: "error", usage: { input: 4, output: 2 } });
+    expect(usage.response("cancelled")).toEqual({ usage: {
+      inputTokens: 4, outputTokens: 2, _meta: { paperclipPi: { provenance: "assistant_message_receipts" } },
+    } });
+    // Ordinary settlement keeps the provider failure and partial accounting.
+    expect(usage.response("end_turn")).toMatchObject({
+      usage: { inputTokens: 4, outputTokens: 2 },
+      _meta: { jetbrains: { air: { sessionFailure: { severity: "error" } } } },
+    });
+  });
+
   it("accounts compaction receipts once and does not fabricate partial coverage", () => {
     const usage = new PiTurnUsage();
     usage.accept({ role: "assistant", timestamp: 1, stopReason: "error", usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, cost: { total: 0.01 } } });

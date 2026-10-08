@@ -154,7 +154,7 @@ import {
   configuredEnvironmentProjection,
 } from "../vendor/paperclip-runner/index.js";
 import { decisionModelService } from "./decision-models.js";
-import { activeIssueInteractionCondition } from "./issue-question-context.js";
+import { activeIssueInteractionCondition, TASK_QUESTION_GUIDANCE } from "./issue-question-context.js";
 import { createAgentIdentityRedactor } from "./agent-identity-redaction.js";
 import { agentIdentityService, supportsManagedAgentIdentity } from "./agent-identity.js";
 import { buildAgentIdentityEnv } from "@paperclipai/adapter-utils/server-utils";
@@ -165,7 +165,7 @@ import { externalObjectService } from "./external-objects.js";
 import { resolvePaperclipInstanceRoot } from "../home-paths.js";
 import { dotRunnerBroker } from "./dot-runner-broker.js";
 import { isAiAuthenticationBlocked } from "./ai-auth-failure.js";
-import { nativeRetryCancellationCommitCondition, rethrowNativeCancellationLockConflict, claimCancellationRequest, startupCancellationFence } from "./native-runtime/native-cancellation-request.js";
+import { nativeRetryCancellationCommitCondition, rethrowNativeCancellationLockConflict, claimCancellationRequest } from "./native-runtime/native-cancellation-request.js";
 import { CHAT_COMPLETION_WAKE_REASON, prepareChatCompletionTurn, chatCompletionInstruction, isCompletedOnboardingHandoffWake } from "./chat-completion-delivery.js";
 import { AgentDirectoryReuseInvalidatedError, isAgentDirectoryCopy } from "./agent-directory-working-copies.js";
 
@@ -261,7 +261,7 @@ import {
   startAdapterExecutionTargetPaperclipBridge,
 } from "@paperclipai/adapter-utils/execution-target";
 import { agentService } from "./agents.js";
-import { agentInstructionWorkingCopyService, instructionWorkingCopyGuidance } from "./agent-instruction-working-copies.js";
+import { agentInstructionWorkingCopyService, collectStoppedInstructionCopyWithRetries, instructionWorkingCopyGuidance } from "./agent-instruction-working-copies.js";
 import { normalizeLegacyRunnerProvider, resolveManagedOpenAiBilling } from "@paperclipai/adapter-utils";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -15961,6 +15961,15 @@ export function heartbeatService(
       >;
       try {
         await controllerLease.assertOwned();
+        const remoteRecovery = runOptions.nativeRestartRecovery?.kind === "reattach_remote_runner"
+          ? runOptions.nativeRestartRecovery : null;
+        const recoveryWorkspace = remoteRecovery
+          ? readNativeWorkspaceSyncReference(parseObject(run.runnerProfileJson).nativeWorkspaceSync) : null;
+        if (remoteRecovery && (!recoveryWorkspace || remoteRecovery.runId !== run.id ||
+            recoveryWorkspace.providerLeaseId !== remoteRecovery.remote.providerLeaseId ||
+            recoveryWorkspace.remoteCwd !== remoteRecovery.remote.remoteCwd)) {
+          throw new Error("native_remote_recovery_lease_mismatch");
+        }
         acquiredEnvironment = await envOrchestrator.acquireForRun({
           companyId: agent.companyId,
           selectedEnvironmentId,
@@ -15973,6 +15982,11 @@ export function heartbeatService(
           agentId: agent.id,
           persistedExecutionWorkspace,
           executionWorkspaceSettings: environmentExecutionWorkspaceSettings,
+          ...(remoteRecovery && recoveryWorkspace ? { reattachRemoteLease: {
+            leaseId: recoveryWorkspace.leaseId,
+            providerLeaseId: remoteRecovery.remote.providerLeaseId,
+            remoteCwd: remoteRecovery.remote.remoteCwd,
+          } } : {}),
         });
         await controllerLease.assertOwned();
         nativeRunnerPreparationSpans.push({
@@ -18242,17 +18256,7 @@ export function heartbeatService(
                     },
                     onLog,
                     onEvent: onAdapterEvent,
-                    instructionWorkingCopy: instructionCopy ? {
-                      runId: run.id,
-                      root: instructionCopy.executionRoot,
-                      ...(instructionCopy.receipt?.warm === true ? { checkpointWarm: async () => {
-                        const saved = await instructionCopies.checkpointWarm({ companyId: agent.companyId, runId: run.id, target: executionTarget });
-                        if (saved) await recordInstructionSave(saved);
-                        return saved?.state === "warm_saved" && saved.errorCode === null;
-                      } } : {}),
-                      hasChanges: () => instructionCopies.hasChanges({ companyId: agent.companyId, runId: run.id, target: executionTarget }),
-                      collectStopped: collectStoppedInstructions,
-                    } : undefined,
+                    instructionWorkingCopy: nativeInstructionWorkingCopy(),
 
                     onUsage: async receipt => { await usageRecorder.capture(receipt); },
                     preparationSpans: nativeRunnerPreparationSpans,

@@ -1,3 +1,4 @@
+import { resolveQualifiedAcpxProfile } from "../drivers/acpx/qualified-profiles.js";
 import { describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
 import { existsSync } from "node:fs";
@@ -29,25 +30,25 @@ import * as workspaceDiff from "./workspace-diff.js";
 
 it.each(["pi", "copilot"] as const)("requires separately bound evaluation opt-in for %s", async (acpxAgent) => {
   const service = new CapabilityLiveSessionService();
-  await expect(service.create({ provider: "acpx", acpxAgent, requestedModel: "explicit-model" }))
+  await expect(service.create({ provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}), requestedModel: "explicit-model" }))
     .rejects.toThrow("explicit evaluation opt-in");
   const mismatched = new CapabilityLiveSessionService({ transportOptions: {
-    acpxCandidateProfile: "pi",
+    acpxCandidateProfile: acpxAgent === "pi" ? "copilot" : "pi",
   } });
-  await expect(mismatched.create({ provider: "acpx", acpxAgent, requestedModel: "explicit-model" }))
+  await expect(mismatched.create({ provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}), requestedModel: "explicit-model" }))
     .rejects.toThrow("explicit evaluation opt-in");
 });
 
-it("admits Pi live sessions without candidate opt-in while preserving the exact profile", async () => {
-  const service = new CapabilityLiveSessionService({ transportFactory: fakeTransportFactory(providerState()) });
-  const session = await service.create({ provider: "acpx", acpxAgent: "pi", requestedModel: "openrouter/deepseek/deepseek-v4-flash-0731" });
+it("admits Pi evaluation sessions only with candidate opt-in while preserving the exact profile", async () => {
+  const service = new CapabilityLiveSessionService({ transportFactory: fakeTransportFactory(providerState()), transportOptions: { acpxCandidateProfile: "pi" } });
+  const session = await service.create({ provider: "acpx", acpxAgent: "pi", piThinkingLevel: "low", requestedModel: "openrouter/deepseek/deepseek-v4-flash-0731" });
   try {
     expect(session.snapshot().config.acpxProfile).toMatchObject({
-      agent: "pi", agentProfileVersion: 12,
-      commandDigest: "sha256:47306e6d2a9b59e8f9189f725ebb7a0a7f91826044d1739e1a35ab31f228ba1f",
+      agent: "pi", ...resolveQualifiedAcpxProfile("pi", "openrouter/deepseek/deepseek-v4-flash-0731"),
     });
-    await expect(service.create({ provider: "acpx", acpxAgent: "pi", requestedModel: "another-model" }))
-      .rejects.toThrow("requires exact model");
+    const custom = await service.create({ provider: "acpx", acpxAgent: "pi", piThinkingLevel: "low", requestedModel: "another-model" });
+    expect(custom.snapshot().config.acpxProfile).toMatchObject({ qualificationModel: "another-model", reportedModelId: "another-model" });
+    await custom.shutdown("test complete");
   } finally { await session.shutdown("test complete"); }
 });
 
@@ -1345,7 +1346,7 @@ describe("Capability live runnerd and Codex session", () => {
         queue.push({ method: "turn/completed", params: { threadId: state.threadId, turn: { id: turnId, status: "completed" } } });
       };
       const service = new CapabilityLiveSessionService({ transportFactory: fakeTransportFactory(state), transportOptions: { acpxCandidateProfile: acpxAgent } });
-      const session = await service.create({ provider: "acpx", acpxAgent, requestedModel: acpxAgent === "pi" ? "openrouter/deepseek/deepseek-v4-flash-0731" : "exact-model" });
+      const session = await service.create({ provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}), requestedModel: acpxAgent === "pi" ? "openrouter/deepseek/deepseek-v4-flash-0731" : "exact-model" });
       try {
         const result = await session.sendMessage("Orient to this task.");
         expect(result.status).toBe("completed"); expect(retained(result.snapshot)).toEqual([]);
@@ -1369,8 +1370,8 @@ describe("Capability live runnerd and Codex session", () => {
       transportOptions: { acpxCandidateProfile: acpxAgent },
     });
     const session = await service.create({
-      provider: "acpx", acpxAgent,
       requestedModel: "explicit-test-model",
+      provider: "acpx", acpxAgent, ...(acpxAgent === "pi" ? { piThinkingLevel: "low" as const } : {}),
     });
     const result = await session.sendMessage("Orient to this task.");
     expect(result.status).toBe("completed");

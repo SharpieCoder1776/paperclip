@@ -568,10 +568,10 @@ export class PiTurnUsage {
     this.failed = previousFailure;
   }
 
-  response(): RecordValue {
+  response(stopReason?: "end_turn" | "cancelled"): RecordValue {
     return {
       ...(this.observed ? { usage: { ...Object.fromEntries(Object.entries(this.total).filter(([name]) => !this.unknown.has(name as keyof typeof this.total))), _meta: { paperclipPi: { provenance: this.compactionObserved ? "assistant_message_and_compaction_receipts" : "assistant_message_receipts", ...(this.costObserved && !this.costIncomplete ? { costUsd: this.cost, costSource: "pi_pricing_estimate" } : {}) } } } } : {}),
-      ...(this.failed ? { _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: "error", category: "service", title: "Pi provider request failed" } } } } } : {}),
+      ...(this.failed && stopReason !== "cancelled" ? { _meta: { jetbrains: { air: { version: 1, sessionFailure: { severity: "error", category: "service", title: "Pi provider request failed" } } } } } : {}),
     };
   }
 }

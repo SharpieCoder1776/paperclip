@@ -117,14 +117,18 @@ export function buildRunnerE2EProcessEnvironment(
   const candidates = new Map<string, string>();
   for (const execution of executions) {
     const agent = execution.profile.qualificationCandidate;
-    if (!agent || agent === "cursor") continue;
+    if (!agent) continue;
     const admittedSuite = execution.suite.id === "extended-harnesses"
-      || execution.suite.id === "rich-acp-warm-continuity";
+      || execution.suite.id === "rich-acp-warm-continuity"
+      || (execution.suite.id === "pi-native" && agent === "pi")
+      || (execution.suite.id === "pi-controls" && agent === "pi")
+      || (["cursor-native", "native-provider-loss"].includes(execution.suite.id) && agent === "cursor")
+      || (execution.suite.id === "copilot-protection" && agent === "copilot")
+      || (execution.suite.id === "native-active-stop" && (agent === "cursor" || agent === "copilot"));
     if (!admittedSuite || !execution.suite.manualOnly) {
       throw new Error("Candidate qualification requires an explicit provider qualification suite");
     }
-    if (agent === "pi" && QUALIFIED_ACPX_PROFILES.pi.qualificationStatus !== "pending") {
-      if (execution.profile.model !== QUALIFIED_ACPX_PROFILES.pi.qualificationModel) throw new Error("Qualified Pi requires its exact declared model");
+    if (QUALIFIED_ACPX_PROFILES[agent].qualificationStatus !== "pending") {
       continue;
     }
     const prior = candidates.get(agent);

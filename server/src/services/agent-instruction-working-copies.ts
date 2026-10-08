@@ -328,12 +328,13 @@ export function agentInstructionWorkingCopyService(db: Db, options: { environmen
   async function recoverStopped() {
     const pending = await db.select({ copy: copies, runtimeMode: heartbeatRuns.runtimeMode }).from(copies)
       .innerJoin(heartbeatRuns, and(eq(heartbeatRuns.companyId, copies.companyId), eq(heartbeatRuns.id, copies.runId)))
-      .where(and(or(and(or(inArray(copies.state, ["prepared", "pending_collection", "warm_saved"]),
+      .where(and(or(and(or(inArray(copies.state, ["prepared", "pending_collection", "unchanged_turn", "warm_saved"]),
           and(eq(copies.state, "preparing"), sql`${copies.receipt}->>'schema' = 'paperclip.agent-files.v1'`)),
           lte(copies.attempts, MAX_COLLECTION_ATTEMPTS - 1)),
         and(eq(copies.state, "unavailable"), isNull(copies.processStoppedAt),
           sql`${copies.location} like 'remote:%'`,
           sql`${copies.receipt}->>'schema' = 'paperclip.agent-files.v1'`)),
+        sql`NOT (coalesce(${copies.receipt}, '{}'::jsonb) ? 'retainedByRunId')`,
         inArray(heartbeatRuns.status, ["succeeded", "failed", "cancelled", "timed_out", "interrupted"]),
         or(isNull(copies.nextAttemptAt), lte(copies.nextAttemptAt, new Date())))).orderBy(asc(copies.updatedAt)).limit(20);
     for (const { copy: row, runtimeMode } of pending) {
@@ -363,8 +364,8 @@ export function agentInstructionWorkingCopyService(db: Db, options: { environmen
         }
       } else if (row.state === "prepared") {
         await patch(row, { state: "pending_collection", errorCode: "INSTRUCTION_STOP_UNCONFIRMED",
-          errorMessage: "The provider's stop has not been confirmed. Instruction collection is pending; no save is claimed.", nextAttemptAt: null });
-      } else if (row.state === "warm_saved") {
+          errorMessage: "The provider's stop has not been confirmed. Instruction collection is pending; no save is claimed.", nextAttemptAt: new Date(Date.now() + 30_000) });
+      } else if (["warm_saved", "pending_collection", "unchanged_turn"].includes(row.state)) {
         // Live retained sessions must not occupy every batch and starve stopped
         // copies from other agents. This does not permit reads without stop proof.
         await patch(row, { nextAttemptAt: new Date(Date.now() + 30_000) });
