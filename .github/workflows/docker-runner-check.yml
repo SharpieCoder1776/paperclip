@@ -194,7 +194,8 @@ jobs:
         run: |
           set -euo pipefail
           test -f scripts/verify-grok-npm-install.mjs || { echo "Selected source does not provide the public-install verifier"; exit 1; }
-          pnpm install --frozen-lockfile --ignore-scripts > remote-verification/npm-setup.log 2>&1
+          pnpm install --resolution-only --ignore-scripts --no-frozen-lockfile > remote-verification/npm-setup.log 2>&1
+          pnpm install --frozen-lockfile --ignore-scripts >> remote-verification/npm-setup.log 2>&1
           pnpm build > remote-verification/npm-build.log 2>&1
           PAPERCLIP_RUNNER_QUALIFICATION_PACKAGES_DIR="$PWD/remote-verification/qualification-packages" \
             node scripts/verify-grok-npm-install.mjs > remote-verification/public-npm-install.log 2>&1
