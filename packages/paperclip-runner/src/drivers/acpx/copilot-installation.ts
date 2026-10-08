@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { resolveRunnerProviderAssetsRoot } from "./provider-assets-root.js";
 import { verifyNativeAcpxInstallation, type VerifiedAcpxInstallation } from "./installation-integrity.js";
 import { COPILOT_LAUNCH_ARGUMENTS, COPILOT_VERSION } from "./copilot-profile.js";
-import { QUALIFIED_ACPX_PROFILES, type QualifiedAcpxProfile } from "./qualified-profiles.js";
+import { QUALIFIED_ACPX_PROFILES, type AcpxReleaseProfile } from "./qualified-profiles.js";
 
 export const COPILOT_CLOSURE_SHA256 = Object.freeze({
   "darwin-arm64": "362f2663e967fb9e34a814bac4619cbf89e6b23069c4051ab1f2f686852d0a32",
@@ -11,7 +11,7 @@ export const COPILOT_CLOSURE_SHA256 = Object.freeze({
 });
 
 /** Admission primitive only. Pending candidates remain gated by qualification. */
-export async function verifyCopilotInstallation(profile: QualifiedAcpxProfile): Promise<VerifiedAcpxInstallation> {
+export async function verifyCopilotInstallation(profile: AcpxReleaseProfile): Promise<VerifiedAcpxInstallation> {
   const expected = QUALIFIED_ACPX_PROFILES.copilot;
   if (profile.agent !== "copilot" || profile.agentProfileVersion !== expected.agentProfileVersion
     || profile.acpxVersion !== expected.acpxVersion || profile.agentServerPackage !== "@github/copilot"

@@ -550,6 +550,8 @@ it("preserves the controller-selected ACPX provider package root", () => {
 
 it.each([
   ["pi", "OPENROUTER_API_KEY"],
+  ["pi", "AWS_ACCESS_KEY_ID"],
+  ["pi", "CUSTOM_PI_API_KEY"],
   ["cursor", "CURSOR_API_KEY"],
   ["cursor", "CURSOR_AUTH_TOKEN"],
   ["copilot", "COPILOT_GITHUB_TOKEN"],
@@ -557,13 +559,14 @@ it.each([
   const launches: RunnerProcessLaunchSpec[] = [];
   vi.stubEnv(key, "ambient-must-not-cross");
   vi.stubEnv(ACPX_CREDENTIAL_BINDING_ENV, "ambient-forged-marker");
+  const custom = key === "CUSTOM_PI_API_KEY" ? { PAPERCLIP_PI_PROVIDERS: JSON.stringify({ private: { baseUrl: "https://provider.invalid", apiKey: key } }) } : {};
   try {
     for (const explicit of [true, false]) {
       const environment = createCapabilityRunnerdProviderEnvironment({
         provider: "acpx", identity, codexHome: "/fixture/home",
         runtimeContextPath: "/fixture/context.json", hasRuntimeContext: false,
         options: { acpxAgent: agent,
-          environment: explicit ? { [key]: "explicit-fixture-credential", [ACPX_CREDENTIAL_BINDING_ENV]: "caller-forged-marker", DATABASE_URL: "must-not-cross" } : undefined },
+          environment: explicit ? { ...custom, [key]: "explicit-fixture-credential", [ACPX_CREDENTIAL_BINDING_ENV]: "caller-forged-marker", DATABASE_URL: "must-not-cross" } : undefined },
       });
       const handle = spawnRunner({
         connection: { mode: "connect", connectUrl: "ws://127.0.0.1:43127" },
@@ -582,7 +585,7 @@ it.each([
         const receipt = launch.environment[ACPX_CREDENTIAL_BINDING_ENV];
         expect(receipt).toBeDefined();
         expect(JSON.parse(receipt!)).toEqual({ schema: "paperclip.acpx_credential_binding.v1", agent,
-          sessionId: identity.normalizedSessionId, names: explicit ? [key] : [] });
+          sessionId: identity.normalizedSessionId, names: explicit ? [...(key === "CUSTOM_PI_API_KEY" ? ["PAPERCLIP_PI_PROVIDERS"] : []), key] : [] });
         expect(receipt).not.toContain("fixture-credential");
         expect(launch.environment.DATABASE_URL).toBeUndefined();
         const provider = createAcpxSidecarHostEnvironment(launch.environment, agent, identity.normalizedSessionId);

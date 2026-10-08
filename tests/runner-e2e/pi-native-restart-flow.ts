@@ -1,3 +1,4 @@
+import { parseRestartRunnerIdentity, type RestartRunnerIdentity } from "./process-tree-owner.js";
 import { createHash, randomBytes } from "node:crypto";
 import { expect, type Page } from "@playwright/test";
 import { canonicalJson } from "../../packages/shared/src/portability-hash.js";
@@ -66,7 +67,19 @@ function inspect(state: State, events: readonly Row[], companyId: string, header
     && id(question.id) && question.answerMode === "text" && question.header === header
     && card.payload?.runtimeRequestId === request.requestId && digest(card.payload.questionSet) === digest(questionSet)
     && card.idempotencyKey === `paperclip-runner-question:${run.id}:${request.requestId}`, "canonical Pi input request identity missing");
-  requireProof(rows.filter(x => x.event.turnId != null || x.event.eventType.startsWith("turn.") || x.event.eventType.startsWith("runtime_request.")).every(({ event }) => event.turnId === request.turnId
+  const submitted = rows.filter(x => x.event.eventType === "turn.submitted");
+  const unboundSubmission = submitted.find(x => x.event.turnId == null);
+  if (unboundSubmission) {
+    // The local runner records submission before ACP assigns the provider turn ID.
+    // Only that unique, ordered pre-start receipt may omit the turn identity.
+    const started = rows.filter(x => x.event.eventType === "turn.started");
+    requireProof(submitted.length === 1 && started.length === 1
+      && started[0]!.event.turnId === request.turnId
+      && unboundSubmission.row.seq < started[0]!.row.seq && started[0]!.row.seq < opening.row.seq
+      && unboundSubmission.event.sourceSeq < started[0]!.event.sourceSeq && started[0]!.event.sourceSeq < opening.event.sourceSeq,
+    "unbound submission is not the unique pre-start receipt");
+  }
+  requireProof(rows.filter(x => x.event.turnId != null || x.event.eventType.startsWith("turn.") || x.event.eventType.startsWith("runtime_request.")).every(({ row, event }) => (event.turnId === request.turnId || row === unboundSubmission?.row)
     && event.normalizedSessionId === run.nativeSessionId
     && event.sourceInstanceId === (event.sourceKind === "runner" ? run.runnerInstanceId : `${run.runnerInstanceId}:control`)), "turn, native session or producer was replaced");
   requireProof(rows.filter(x => x.event.sourceKind === "control_plane").every(x => x.event.turnId === request.turnId), "control-plane result belongs to another turn");
@@ -120,7 +133,7 @@ export function gradePiRestartCompletion(state: State, events: readonly Row[], p
 
 export async function runPiPendingControllerRestart(input: {
   page: Page; companyId: string; deadlineAt: number; load(): Promise<State>; events(runId: string): Promise<Row[]>;
-  restart(): Promise<void>; settle(): Promise<State>; readProof(): Promise<unknown>;
+  preserveLocalRunner?: boolean; restart(preserveRunner?: RestartRunnerIdentity): Promise<void>; settle(): Promise<State>; readProof(): Promise<unknown>;
   capture(id: string, label: string, file: string): Promise<void>; evidence(name: string, data: unknown): Promise<void>;
 }): Promise<Check[]> {
   const checks: Check[] = [], answer = `PI-RESTART-${randomBytes(16).toString("hex")}`;
@@ -138,15 +151,19 @@ export async function runPiPendingControllerRestart(input: {
     const composer = () => input.page.getByTestId("question-text-answer-composer").filter({ visible: true });
     await expect(composer()).toHaveCount(1);
     await input.capture("pi-restart-pending", "Pi native question before controller restart", "pi-restart-pending.png");
-    await input.restart();
+    const runnerIdentity = input.preserveLocalRunner === false ? undefined : parseRestartRunnerIdentity(before.state.runs[0]);
+    await input.restart(runnerIdentity);
     await input.page.reload();
     const after = await snapshot("pi-native-restart-after.json"), resumed = observePiRestartPending(after.state, after.events, input.companyId);
     check("restart-same-pending-native-request", digest(resumed) === digest(pending), "Controller restart retained the same unanswered request, run, turn, native session and producer");
+    if (runnerIdentity) check("restart-same-live-runner-identity", digest(parseRestartRunnerIdentity(after.state.runs[0])) === digest(runnerIdentity),
+      "The original durable runner PID, process group and start identity survived the controller restart");
     await expect(composer()).toHaveCount(1);
     await input.capture("pi-restart-reconnected", "Same Pi question after controller restart", "pi-restart-reconnected.png");
     await composer().locator('[contenteditable="true"],textarea').first().fill(answer);
-    const route = `/api/issues/${pending.issueId}/interactions/${pending.interactionId}/respond`;
-    const submitted = input.page.waitForRequest(request => new URL(request.url()).pathname === route && request.method() === "POST",
+    const issueRefs = [pending.issueId, after.state.issue.identifier].filter(id);
+    const routes = new Set(issueRefs.map(issueRef => `/api/issues/${encodeURIComponent(issueRef)}/interactions/${pending.interactionId}/respond`));
+    const submitted = input.page.waitForRequest(request => routes.has(new URL(request.url()).pathname) && request.method() === "POST",
       { timeout: Math.max(1, input.deadlineAt - Date.now()) });
     const button = input.page.getByRole("button", { name: after.state.interactions[0]!.payload.questionSet.submitLabel ?? "Submit answers", exact: true }).filter({ visible: true });
     await expect(button).toHaveCount(1); await button.click();

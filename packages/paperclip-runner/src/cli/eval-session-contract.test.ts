@@ -35,7 +35,7 @@ function request(overrides: Record<string, unknown> = {}): unknown {
       maxAgentTurns: 1,
       maxEstimatedCostNanodollars: 100_000_000,
     },
-    session: {},
+    session: overrides.acpxAgent === "pi" ? { piThinkingLevel: "low" } : {},
     ...overrides,
   };
 }
@@ -68,13 +68,13 @@ function agentCoreProfile(overrides: Record<string, unknown> = {}) {
 
 describe("eval-session request contract", () => {
   it.each(["pi", "copilot"] as const)("admits %s only with the matching CLI diagnostic opt-in", (agent) => {
-    const value = request({ provider: "acpx", acpxAgent: agent, model: "explicit-provider-model" });
+    const value = request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model: "explicit-provider-model" });
     expect(() => parseEvalSessionRequest(value)).toThrow("--candidate-profile");
-    expect(parseEvalSessionRequest(value, { candidateProfile: agent })).toMatchObject({ acpxAgent: agent, model: "explicit-provider-model" });
+    expect(parseEvalSessionRequest(value, { candidateProfile: agent })).toMatchObject({ acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model: "explicit-provider-model" });
     expect(() => parseEvalSessionRequest(value, { candidateProfile: agent === "pi" ? "cursor" : "pi" })).toThrow("must match");
-    expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, model: "" }), { candidateProfile: agent })).toThrow("request.model");
+    expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model: "" }), { candidateProfile: agent })).toThrow("request.model");
     expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: "codex", session: { acpxAgent: agent } }))).toThrow("session.acpxAgent must match");
-    expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, candidateProfile: agent }))).toThrow("--candidate-profile");
+    expect(() => parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), candidateProfile: agent }))).toThrow("--candidate-profile");
   });
 
   it("admits qualified Cursor without a diagnostic flag and preserves its explicit model", () => {
@@ -106,7 +106,7 @@ describe("eval-session request contract", () => {
     const args = ["--request", requestPath, "--output", join(workspace, "output.json"), "--candidate-profile", agent];
     const serviceFactory = vi.fn(() => { throw new Error("provider must not start"); });
     try {
-      await writeFile(requestPath, JSON.stringify(request({ provider: "acpx", acpxAgent: agent, model,
+      await writeFile(requestPath, JSON.stringify(request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model,
         runnerd: { path: join(workspace, "missing-runnerd"), sha256: "a".repeat(64) },
         session: { workingDirectory: workspace },
       })));
@@ -216,7 +216,7 @@ describe("eval-session request contract", () => {
   it("requires explicit Pi diagnosis and accepts both qualified remote provider profiles", () => {
     expect(() => parseEvalSessionRequest(request({
       provider: "acpx",
-      acpxAgent: "pi",
+      acpxAgent: "pi", piThinkingLevel: "low",
     }))).toThrow("--candidate-profile");
     expect(parseEvalSessionRequest(request({
       provider: "aws_agentcore",
@@ -337,7 +337,7 @@ describe("eval-session usage", () => {
 
   it.each(["pi", "cursor", "copilot"] as const)("keeps %s oracle results when the current turn explicitly has unavailable usage", (agent) => {
     const parsed = parseEvalSessionRequest(request({
-      provider: "acpx", acpxAgent: agent, model: "exact-provider-model",
+      provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model: "exact-provider-model",
     }), { candidateProfile: agent });
     const unavailable = {
       turnId: "turn-candidate", attemptId: "attempt-1", agent,
@@ -442,7 +442,7 @@ describe("eval-session usage", () => {
       estimatedCostNanodollars: null, pricingVersion: null, ratesUsdPerMillionTokens: null,
       costCoverage: "unpriced",
     });
-    const parsed = parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, model: "exact-provider-model[context=272k]" }), { candidateProfile: agent as "pi" | "cursor" | "copilot" });
+    const parsed = parseEvalSessionRequest(request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model: "exact-provider-model[context=272k]" }), { candidateProfile: agent as "pi" | "cursor" | "copilot" });
     expect(() => boundedEvalSessionUsage(parsed, {
       turnId: "candidate-turn", status: "completed", assistantText: "Completed provider response", snapshot,
     })).toThrow("budget cost coverage is unavailable");
@@ -474,7 +474,7 @@ describe("eval-session budget settlement", () => {
         providerModel: { id: model, provider: agent === "grok" ? "xai" : "github" }, status: "idle", activeTurnId: null,
         createdAt: "2026-09-28T19:00:00.000Z", updatedAt: "2026-09-28T19:00:01.000Z",
         authority: { companyId: "company-1", actorId: "actor-1", taskId: "task-1", runId: "run-1", sessionId: "session-1", scenarioId: "budget-test" },
-        config: { provider: "acpx", acpxAgent: agent, driver: "acpx_runtime", seedState: state, workingDirectory: workspace, scenario: { id: "budget-test" }, capabilities: [], explicitClaims: [], turnTimeoutMs: 1000 },
+        config: { provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), driver: "acpx_runtime", seedState: state, workingDirectory: workspace, scenario: { id: "budget-test" }, capabilities: [], explicitClaims: [], turnTimeoutMs: 1000 },
         mockState: state, process: null, networkEvidence: { realPaperclipRequests: 0, childPaperclipEnvironmentKeys: [] },
         transcript: [{ id: "assistant-1", role: "assistant", text: "Retained actual provider response", turnId: "turn-1", at: "2026-09-28T19:00:01.000Z" }],
         evidence: [], authorizationRecords: [], attempts: [], terminalTurns: [{ turnId: "turn-1", status: "completed" }],
@@ -484,7 +484,7 @@ describe("eval-session budget settlement", () => {
       const sendMessage = vi.fn(async () => ({ turnId: "turn-1", status: "completed", assistantText: "Retained actual provider response", snapshot }));
       const completeAttempt = vi.fn(async () => undefined);
       const shutdown = vi.fn(async () => { snapshot.status = "closed"; });
-      const input = request({ provider: "acpx", acpxAgent: agent, model,
+      const input = request({ provider: "acpx", acpxAgent: agent, ...(agent === "pi" ? { piThinkingLevel: "low" } : {}), model,
         runnerd: { path: binary, sha256: createHash("sha256").update("unused fake runner").digest("hex") },
         session: { workingDirectory: workspace }, limits: { turnTimeoutMs: 1000, maxAgentTurns: 2, maxEstimatedCostNanodollars: 100_000_000 },
       });

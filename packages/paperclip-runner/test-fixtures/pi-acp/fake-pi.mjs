@@ -1,6 +1,6 @@
 // Protocol fixture: no provider network calls and no secrets.
 import { createHash } from "node:crypto";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 const home = process.env.PI_CODING_AGENT_DIR;
@@ -56,6 +56,9 @@ const begin = () => { modelIteration++; output({ type: "turn_start" });
   messageTimestamp++; assistantActive = true; output({ type: "message_start", message: nativeMessage() });
 };
 let model = "fixture-model";
+const thinkingFile = join(home, "thinking.json");
+let thinkingLevel = existsSync(thinkingFile) ? JSON.parse(readFileSync(thinkingFile, "utf8")) : process.env.PI_FIXTURE_THINKING_CURRENT ?? "off";
+const availableThinkingLevels = () => model === "fixture-alternate" ? ["off", "high"] : ["off", "low", "high", "max"];
 const compaction = () => ({ firstKeptEntryId: "fixture-entry", tokensBefore: 50, summary: "Fixture compacted", usage: { input: 5, output: 2, cacheRead: 1, cacheWrite: 0, cost: { total: 0.02 } } });
 const finish = (answer = "done") => {
   if (!assistantActive) { output({ type: "turn_end" }); begin(); }
@@ -70,9 +73,19 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   const request = JSON.parse(line);
   const response = (data = {}) => output({ type: "response", id: request.id, command: request.type, success: true, data });
   if (request.type === "extension_ui_response") { finish(JSON.stringify(request)); return; }
-  if (request.type === "get_state") { response({ sessionId: "fixture-session", sessionFile, model: { provider: "openrouter", id: model }, thinkingLevel: "off" }); return; }
-  if (request.type === "get_available_models") { response({ models: [{ provider: "openrouter", id: "fixture-model", name: "Fixture" }] }); return; }
-  if (request.type === "set_model") { model = request.modelId; response({ model: { provider: request.provider, id: model } }); return; }
+  if (request.type === "get_state") { response({ sessionId: "fixture-session", sessionFile, model: { provider: "openrouter", id: model }, thinkingLevel }); return; }
+  if (request.type === "get_available_thinking_levels") {
+    const scenario = process.env.PI_FIXTURE_THINKING_CAPABILITIES;
+    if (scenario === "failed") { output({ type: "response", id: request.id, command: request.type, success: false, error: "fixture capability failure" }); return; }
+    response({ levels: scenario === "duplicate" ? ["off", "off"] : scenario === "unknown" ? ["off", "future"] : scenario === "empty" ? [] : scenario === "missing" ? undefined : availableThinkingLevels() }); return;
+  }
+  if (request.type === "set_thinking_level") {
+    appendFileSync(join(home, "thinking-calls.jsonl"), JSON.stringify(request.level) + "\n");
+    thinkingLevel = process.env.PI_FIXTURE_THINKING_CLAMP === "1" ? "high" : request.level;
+    writeFileSync(thinkingFile, JSON.stringify(thinkingLevel)); response(); return;
+  }
+  if (request.type === "get_available_models") { response({ models: [{ provider: "openrouter", id: "fixture-model", name: "Fixture" }, { provider: "openrouter", id: "fixture-alternate", name: "Alternate" }] }); return; }
+  if (request.type === "set_model") { model = request.modelId; if (!availableThinkingLevels().includes(thinkingLevel)) thinkingLevel = "high"; response({ model: { provider: request.provider, id: model } }); return; }
   if (request.type === "get_messages") { response({ messages: process.env.PI_FIXTURE_HISTORY ? [
     { role: "toolResult", toolName: "mcp__paperclip__paperclip_finish", toolCallId: "call_0", content: [{ type: "text", text: "correct criteria" }], isError: true },
     { role: "toolResult", toolName: "mcp__paperclip__paperclip_finish", toolCallId: "call_0", content: [{ type: "text", text: "accepted" }] },
@@ -83,7 +96,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (request.type === "steer") { response(inputDisposition); if (inputDisposition.disposition !== "queued") return; output({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `steered:${request.message}` } }); return; }
   if (request.type === "follow_up") { response(inputDisposition); if (inputDisposition.disposition !== "queued") return; finish(`follow-up:${request.message}`); return; }
   if (request.type === "compact") { output({ type: "compaction_start", reason: "manual" }); const result = compaction(); output({ type: "compaction_end", reason: "manual", result, aborted: false, willRetry: false }); response(result); return; }
-  if (request.type === "abort") { response(); if (active) { active = false; if (assistantActive) endMessage("aborted", {}); output({ type: "turn_end" }); output({ type: "agent_settled" }); } return; }
+  if (request.type === "abort") { response(); if (active) { active = false; if (assistantActive) endMessage(process.env.PI_FIXTURE_CANCEL_ERROR === "1" ? "error" : "aborted", process.env.PI_FIXTURE_CANCEL_ERROR === "1" ? { input: 11, output: 3 } : {}); output({ type: "turn_end" }); output({ type: "agent_settled" }); } return; }
   if (request.type === "prompt") {
     response({ disposition: "started" }); active = true; output({ type: "agent_start" });
     if (request.message === "missing-message-start") { modelIteration++; output({ type: "turn_start" }); output({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "invalid" } }); return; }

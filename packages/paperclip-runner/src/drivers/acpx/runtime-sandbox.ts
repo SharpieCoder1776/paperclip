@@ -1,3 +1,4 @@
+import { piProviderConfiguration } from "./pi-provider-config.js";
 import { configuredEnvironmentKeys } from "../../configured-environment.js";
 import { COPILOT_SYSTEM_INSTRUCTIONS_FILE } from "./copilot-profile.js";
 import { randomBytes } from "node:crypto";
@@ -389,6 +390,10 @@ export async function prepareAcpxRuntimeSandbox(input: {
     workspaceRecordPath,
     `${input.binding.workspacePath}\n`,
   );
+  if (input.agent === "pi") {
+    const configuration = piProviderConfiguration(input.environment);
+    if (configuration) await writePrivateFile(join(agentHomeDirectory, "models.json"), configuration.json);
+  }
   if (input.agent === "claude") {
     // ACP otherwise rewrites exact IDs (including user-entered model IDs) to
     // picker aliases such as "sonnet". Its supported availableModels setting

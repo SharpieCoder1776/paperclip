@@ -7,10 +7,9 @@ import { PI_NODE_VERSION } from "./pi-node-pins.js";
 import { verifyPiRuntimeLayoutForNativeSnapshot, type PiRuntimeManifest } from "./pi-verified-runtime.js";
 import { readNativeAcpxDistributionEntries } from "./native-distribution-integrity.js";
 import { resolveRunnerProviderAssetsRoot } from "./provider-assets-root.js";
-import { QUALIFIED_ACPX_PROFILES, type QualifiedAcpxProfile } from "./qualified-profiles.js";
+import { QUALIFIED_ACPX_PROFILES, type AcpxReleaseProfile } from "./qualified-profiles.js";
 
 const MAX_DISTRIBUTION_METADATA_BYTES = 4 * 1024 * 1024;
-const PI_MODEL = "openrouter/deepseek/deepseek-v4-flash-0731";
 const FIXED_PATHS = Object.freeze({
   node: "node/bin/node",
   piEntrypoint: "node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
@@ -23,10 +22,10 @@ function record(value: unknown): Record<string, unknown> {
 }
 
 /** Candidate identity is build-owned; model selection cannot substitute a CLI. */
-export function assertPiInstallationProfile(profile: QualifiedAcpxProfile): void {
+export function assertPiInstallationProfile(profile: AcpxReleaseProfile): void {
   const trusted = QUALIFIED_ACPX_PROFILES.pi;
-  if (profile.agentProfileVersion !== 12) throw new Error("Pi rich ACP requires profile version 12; reopen the previous session");
-  if (profile.agent !== "pi" || profile.driverKind !== trusted.driverKind || profile.protocolVersion !== trusted.protocolVersion || profile.acpxVersion !== trusted.acpxVersion || profile.agentServerPackage !== "pi-acp" || profile.agentServerVersion !== "0.0.33" || profile.agentRuntimePackage !== "@earendil-works/pi-coding-agent" || profile.agentRuntimeVersion !== "1.0.0" || profile.commandDigest !== trusted.commandDigest || profile.permissionPolicy !== "interactive" || profile.qualificationModel !== PI_MODEL || profile.reportedModelId !== PI_MODEL) throw new Error("Pi distribution profile differs from its trusted declaration");
+  if (profile.agentProfileVersion !== trusted.agentProfileVersion) throw new Error(`Pi rich ACP requires profile version ${trusted.agentProfileVersion}; reopen the previous session`);
+  if (profile.agent !== "pi" || profile.driverKind !== trusted.driverKind || profile.protocolVersion !== trusted.protocolVersion || profile.acpxVersion !== trusted.acpxVersion || profile.agentServerPackage !== "pi-acp" || profile.agentServerVersion !== "0.0.33" || profile.agentRuntimePackage !== "@earendil-works/pi-coding-agent" || profile.agentRuntimeVersion !== "1.0.0" || profile.commandDigest !== trusted.commandDigest || profile.permissionPolicy !== "interactive") throw new Error("Pi distribution profile differs from its trusted declaration");
 }
 
 async function readDistributionMetadata(path: string): Promise<Record<string, unknown>> {
@@ -47,7 +46,7 @@ async function readDistributionMetadata(path: string): Promise<Record<string, un
  * native closure supplies the snapshot and provider-group lifetime guardian.
  * Qualification status remains the caller's production admission gate.
  */
-export async function verifyPiInstallation(profile: QualifiedAcpxProfile): Promise<VerifiedAcpxInstallation> {
+export async function verifyPiInstallation(profile: AcpxReleaseProfile): Promise<VerifiedAcpxInstallation> {
   assertPiInstallationProfile(profile);
   const target = `${process.platform}-${process.arch}`;
   if (!Object.hasOwn(PI_DISTRIBUTION_CLOSURE_SHA256, target)) throw new Error("Pi distribution target is unsupported");
@@ -60,7 +59,11 @@ export async function verifyPiInstallation(profile: QualifiedAcpxProfile): Promi
       if (!stat.isDirectory() || stat.isSymbolicLink() || await realpath(path) !== path) throw new Error("Pi distribution escaped its fixed asset directory");
     }
   };
-  await assertDirectories();
+  try { await assertDirectories(); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") throw new Error("Pi runtime is not installed on this host; run paperclipai runtime setup pi before selecting Pi");
+    throw error;
+  }
   const metadataPath = join(assets, "pi-distribution.json");
   const metadata = await readDistributionMetadata(metadataPath);
   const targetMetadata = record(metadata.target);
@@ -88,12 +91,13 @@ export async function verifyPiInstallation(profile: QualifiedAcpxProfile): Promi
     commandDigest: profile.commandDigest,
     agentServerPackageJsonPath: join(runtimeRoot, "node_modules/pi-acp/package.json"),
     agentRuntimePackageJsonPath: join(runtimeRoot, "node_modules/@earendil-works/pi-coding-agent/package.json"),
-    async openCommand() {
+    async openCommand(options?: { signal?: AbortSignal }) {
+      options?.signal?.throwIfAborted();
       await assertDirectories();
       // The native primitive reads every admitted file through held descriptors
       // into a new immutable snapshot. The bootstrap derives its own launch
       // environment from that snapshot, never these mutable installation paths.
-      return native.openCommand();
+      return native.openCommand(options);
     },
   });
 }

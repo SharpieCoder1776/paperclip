@@ -10,7 +10,12 @@ import { sanitizeJson } from "./redaction.js";
 
 // Drive the actual flow and packager without a browser, provider, or server.
 // Only the external browser/API boundaries are scripted.
-vi.mock("./user-actions.js", () => ({ createTaskThroughUi: vi.fn() }));
+vi.mock("./user-actions.js", () => ({
+  createTaskThroughUi: vi.fn(async (input: { requireExplicitTitle?: boolean }) => {
+    expect(input.requireExplicitTitle).toBe(true);
+    return { submittedAtMs: Date.now(), issueId: "issue-fixture" };
+  }),
+}));
 vi.mock("@playwright/test", () => ({
   expect: (actual: unknown, message?: string) => ({
     toBe: (expected: unknown) => expect(actual, message).toBe(expected),
@@ -28,7 +33,7 @@ async function fixture(options: { failComments?: boolean; remote?: boolean; inco
   const workspacePath = join(root, "workspace"); const snapshots = join(privateDir, "snapshots");
   for (const directory of [workspacePath, snapshots, join(privateDir, "html-report"), join(privateDir, "blob-report")]) await mkdir(directory, { recursive: true });
   const execution = { id: "pi-native.runner-acpx-pi.local.native-questions", environment: { id: options.remote ? "daytona" : "local" }, profile: { qualificationCandidate: "pi" }, task: piNativeTasks.find(row => row.id === "native-questions")! } as FlowInput["execution"];
-  const issue = { id: "issue-fixture", identifier: "PI-1", title: execution.task.buildTitle("fixture"), status: "done" };
+  const issue = { id: "issue-fixture", identifier: "PI-1", title: "Provider-generated task name", companyId: "company-fixture", assigneeAgentId: "agent-fixture", status: "done" };
   const run = { id: "run-fixture", status: "succeeded", runtimeMode: "native", createdAt: "2026-09-29T00:00:00Z" };
   const headers = ["Pi native color", "Pi native confirmation", "Pi native name", "Pi native draft"];
   let answered = 0; const typed: string[] = []; let answerProof = ""; let remoteFinished = false; const cleanupAssertions: Array<() => Promise<unknown>> = [];
@@ -88,7 +93,7 @@ async function fixture(options: { failComments?: boolean; remote?: boolean; inco
   };
   const input = {
     page: page as unknown as FlowInput["page"], api: api as unknown as FlowInput["api"],
-    fixtures: { company: { id: "company-fixture", issuePrefix: "PI" }, agent: { name: "Pi fixture" }, environment: { id: "environment-fixture" } } as FlowInput["fixtures"],
+    fixtures: { company: { id: "company-fixture", issuePrefix: "PI" }, agent: { id: "agent-fixture", name: "Pi fixture" }, environment: { id: "environment-fixture" } } as FlowInput["fixtures"],
     execution, nonce: "fixture", workspacePath, deadlineAt: Date.now() + 5000,
     restart: async () => { throw new Error("Unexpected restart"); }, observe: () => {}, capture, evidence,
     ...(options.remote ? { registerCleanupAssertion: (fn: () => Promise<unknown>) => cleanupAssertions.push(fn), remoteBootstrap: {
@@ -108,7 +113,7 @@ describe("Pi native terminal evidence", () => {
   it("packages the actual successful native-question flow with durable API state and every event page", async () => {
     const f = await fixture();
     const result = await runPiNativeFlow(f.input);
-    expect(result.checks).toHaveLength(15);
+    expect(result.checks).toHaveLength(16);
     expect(result.checks.every(check => check.passed)).toBe(true);
     const packaged = await packageEvidence({ privateDir: f.privateDir, uploadDir: f.uploadDir, secrets: [f.secret], expectPassScreenshot: true });
     expect(packaged.missing).toEqual([]); expect(packaged.leaks).toEqual([]);
@@ -134,7 +139,7 @@ describe("Pi native terminal evidence", () => {
     const f = await fixture({ failComments: true });
     await expect(runPiNativeFlow(f.input)).rejects.toThrow("fixture comments unavailable");
     const checks = JSON.parse(await readFile(join(f.snapshots, "pi-native-checks.json"), "utf8"));
-    expect(checks.checks).toHaveLength(15);
+    expect(checks.checks).toHaveLength(16);
     expect(checks.checks.every((check: { passed: boolean }) => check.passed)).toBe(true);
     expect(f.capture.mock.calls.some(([id]) => id === "final-state")).toBe(false);
     const packaged = await packageEvidence({ privateDir: f.privateDir, uploadDir: f.uploadDir, secrets: [f.secret], expectPassScreenshot: true });

@@ -116,7 +116,7 @@ describe("Codex ACPX harness driver", () => {
   });
 
   it.each(["tool-1", "tool with spaces", "🧭/plan", "x".repeat(300)])("binds a native Cursor plan request to its actual projected tool identity: %s", async toolCallId => {
-    const fixture = driverFixture({ agent: "cursor", model: "explicit-test-model", cursorMode: "plan", providerPolicy: { readOnly: false } }, {
+    const fixture = driverFixture({ agent: "cursor", model: "explicit-test-model", mode: "plan", providerPolicy: { readOnly: false } }, {
       runtimeEvents: [{ type: "tool_call", tag: "tool_call", toolCallId, title: "arbitrary tool display", kind: "execute", status: "pending" }],
     });
     const session = await fixture.driver.openSession({ runId: "run-plan-identity", normalizedSessionId: "session-1", workingDirectory: "/workspace" });

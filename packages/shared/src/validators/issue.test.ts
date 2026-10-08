@@ -161,6 +161,17 @@ describe("issue validators", () => {
     expect(parsed.comment).toBe("Done\n\n- Verified the route");
   });
 
+  it("preserves literal escapes in multiline issue descriptions and comments", () => {
+    const content = `${"0123456789abcdef".repeat(2)}\n`;
+    const description = ["Write the exact JSON content.", "```json", JSON.stringify({ content }), "```"].join("\n");
+    expect(createIssueSchema.parse({ title: "Native memory", description }).description).toBe(description);
+    expect(updateIssueSchema.parse({ description, comment: description }).description).toBe(description);
+    expect(updateIssueSchema.parse({ comment: description }).comment).toBe(description);
+    const storedJson = createIssueSchema.parse({ title: "Native memory", description }).description!.split("\n")[2]!;
+    expect(JSON.parse(storedJson).content).toBe(content);
+    expect(Buffer.byteLength(JSON.parse(storedJson).content, "utf8")).toBe(33);
+  });
+
   it("validates structured unblock descriptors", () => {
     expect(
       updateIssueSchema.parse({

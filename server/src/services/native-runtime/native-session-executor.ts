@@ -1,6 +1,6 @@
+import { configuredEnvironment } from "../../vendor/paperclip-runner/index.js";
 import { agents } from "@paperclipai/db";
 import { dotRunnerBroker } from "../dot-runner-broker.js";
-import { configuredEnvironment } from "../../vendor/paperclip-runner/index.js";
 import { CURSOR_DISTRIBUTION_PINS, QUALIFIED_ACPX_PROFILES, QUALIFIED_ACPX_VERSION } from "../../vendor/paperclip-runner/index.js";
 import { isProviderMode } from "../../vendor/paperclip-runner/index.js";
 import { bundledRemoteProviderPackManifestPath, bundledRemoteRunnerBinary } from "../../vendor/paperclip-runner/index.js";
@@ -38,6 +38,7 @@ import { nativeCompletionFeedback } from "./native-completion-feedback.js";
 import { hasAcknowledgedNativeReassignmentStopIntent, hasAcknowledgedNativeStopIntent } from "../acknowledged-native-stop.js";
 import { stoppedCodexTurnIsTextOnly } from "./stopped-codex-turn.js";
 import { prepareVerifiedRemoteProviderPack } from "./remote-provider-pack.js";
+import { selectRemotePiCompanion } from "./remote-pi-companion.js";
 import { readNativeLocalProcessStop, PROCESS_START_REQUESTED } from "../native-local-process-stop.js";
 import { remoteLeaseCleanupScope } from "../remote-execution-termination.js";
 import { resolveConnectorAssignments, isConnectorSkill } from "../connector-runtime.js";
@@ -1248,6 +1249,7 @@ export function createGovernedWaitEventObservation(
   resolvePending: () => Promise<PrpStructuredRunResult | null>,
 ) {
   const pendingTools = new Set<string>();
+  let providerLost = false;
   let generation = 0;
   let observation: {
     sourceInstanceId: string;
@@ -1261,6 +1263,7 @@ export function createGovernedWaitEventObservation(
       const currentGeneration = ++generation;
       observation = null;
       const payload = record(event.payload);
+      providerLost ||= event.eventType === "runtime_request.expired" && payload.reason === "provider_process_lost";
       const kind = payload.kind;
       const tool = ["dynamicToolCall", "mcpToolCall", "commandExecution"].includes(String(kind));
       if (event.itemId) {
@@ -1276,7 +1279,9 @@ export function createGovernedWaitEventObservation(
       if (event.eventType === "item.completed" && (
         pendingTools.size > 0 || (!tool && !(kind === "agentMessage" && payload.channel === "final"))
       )) return;
-      if (!eligible) return;
+      // A replacement question preserves human input after a provider crash;
+      // it does not authorize a successful suspension of the failed execution.
+      if (providerLost || !eligible) return;
       const result = await resolvePending();
       if (generation !== currentGeneration || result === null) return;
       // If the interaction is answered after this read, parking remains the
@@ -1656,8 +1661,8 @@ function nativeSessionKey(execution: NativeExecutionInput): string {
   );
 }
 
-function nativeSessionWorkspaceScope(execution: NativeExecutionInput) {
-  if (execution.provider.kind === "openai_dot") return { kind: "none" as const };
+export function nativeSessionWorkspaceScope(execution: { binding: Pick<NativeExecutionInput["binding"], "runId" | "executionWorkspaceId">; workspace: NativeExecutionInput["workspace"] }) {
+  if ("access" in execution.workspace) return { kind: "none" as const };
   // Projectless local runs use the heartbeat run id as a durable placeholder
   // rather than fabricating an execution_workspaces row. Do not let that
   // per-run placeholder break continuity for the same provider session; the
@@ -5623,6 +5628,7 @@ export function providerSessionIdentityFromDurableProviderState(input: {
         identity.effectiveModel !== expectedModel ||
         identity.permissionMode !== input.execution.provider.permissionMode ||
         !acpxRecoveryModeMatches(input.execution.provider, descriptor.mode, identity.mode) ||
+        !acpxRecoveryPiThinkingMatches(input.execution.provider, descriptor.piThinkingLevel, identity.piThinkingLevel) ||
         !["approve-all", "approve-paperclip", "approve-reads", "deny-all"].includes(
           String(identity.permissionMode),
         ) ||
@@ -5730,6 +5736,12 @@ function acpxRecoveryModeMatches(
     && observedModes.every(mode => mode === expected);
 }
 
+function acpxRecoveryPiThinkingMatches(provider: NativeExecutionInput["provider"], ...observed: unknown[]): boolean {
+  const expected = record(provider).piThinkingLevel;
+  if (provider.kind === "acpx" && provider.agent === "pi") return ["off", "low", "high", "max"].includes(String(expected)) && observed.every(value => value === expected);
+  return expected === undefined && observed.every(value => value === undefined);
+}
+
 export function providerSessionIdentityTransitionIsAllowed(input: {
   execution: NativeExecutionInput;
   previous: unknown;
@@ -5740,6 +5752,7 @@ export function providerSessionIdentityTransitionIsAllowed(input: {
     record(record(input.previous).providerSessionIdentity).mode,
     record(record(input.current).providerSessionIdentity).mode,
   )) return false;
+  if (!acpxRecoveryPiThinkingMatches(input.execution.provider, record(record(input.previous).providerSessionIdentity).piThinkingLevel, record(record(input.current).providerSessionIdentity).piThinkingLevel)) return false;
   if (canonicalJson(input.previous) === canonicalJson(input.current)) {
     return true;
   }
@@ -7651,7 +7664,7 @@ async function executePaperclipNativeSessionWithinScope(
   }
   if (
     input.execution.provider.kind === "acpx" &&
-    ["pi", "copilot"].includes(input.execution.provider.agent) &&
+    ["copilot"].includes(input.execution.provider.agent) &&
     !resolveAcpxQualification(input.execution.provider, process.env)
   ) {
     throw new Error(
@@ -9890,7 +9903,7 @@ type RemoteProviderPackManifest = {
     distDigest: string;
     bridgeDigest: string;
     acpxProfileDigests: typeof REMOTE_PROVIDER_PACK_PROFILE_DIGESTS;
-    providers?: Partial<Record<"cursor", {
+    providers?: Partial<Record<"pi" | "cursor", {
       version: string; profileDigest: string; closureDigest: string; qualification: "qualified" | "pending";
       path: string; sha256: string;
     }>>;
@@ -10079,9 +10092,10 @@ function readRemoteProviderPackIdentity(packRoot: string, verifyControllerFiles:
     }
     for (const [provider, candidate] of Object.entries(candidates)) {
       const expectedPath = `provider-assets/${provider}/${payload.target.platform}-${payload.target.architecture}`;
-      if (!(inventory === "providers" ? ["cursor"] : ["cursor", "copilot", "pi"]).includes(provider) || !candidate
+      if (!(inventory === "providers" ? ["pi", "cursor"] : ["cursor", "copilot", "pi"]).includes(provider) || !candidate
         || Object.keys(candidate).some(key => !["version", "profileDigest", "closureDigest", "qualification", "path", "sha256"].includes(key))
-        || candidate.qualification !== (provider === "cursor" ? "qualified" : "pending") || candidate.path !== expectedPath
+        || candidate.qualification !== (["pi", "cursor"].includes(provider) ? "qualified" : "pending")
+        || candidate.path !== expectedPath
         || typeof candidate.version !== "string" || !candidate.version || candidate.version.length > 120
         || !/^sha256:[a-f0-9]{64}$/.test(candidate.profileDigest)
         || !/^sha256:[a-f0-9]{64}$/.test(candidate.closureDigest)
@@ -11348,8 +11362,16 @@ async function createRunnerdBackendWithinSessionClaim(
     remoteTarget !== null &&
     (input.execution.provider.kind === "opencode" ||
       input.execution.provider.kind === "acpx");
+  // Pi's explicit operator import supplies the target-platform authority. Never
+  // substitute a Mac controller daemon or trust an image's self-reported hashes.
+  // Existing explicit overrides and every other provider keep their old path.
+  const remotePiCompanion = await selectRemotePiCompanion({
+    provider: input.execution.provider, remote: remoteTarget !== null,
+    binaryOverride: input.runnerRemoteBinaryPath, packOverride: input.runnerRemoteProviderPackPath,
+    workspaceRoot: input.execution.workspace.cwd,
+  });
   const configuredProviderPackRoot =
-    input.runnerRemoteProviderPackPath?.trim() || null;
+    input.runnerRemoteProviderPackPath?.trim() || remotePiCompanion?.providerPack || null;
   let expectedProviderPackManifest: RemoteProviderPackManifest | null = null;
   const useBundledCursorImageAssets = requiresRemoteProviderPack && !configuredProviderPackRoot &&
     input.execution.provider.kind === "acpx" && input.execution.provider.agent === "cursor";
@@ -11382,7 +11404,7 @@ async function createRunnerdBackendWithinSessionClaim(
   // When an explicit remote artifact is configured, prepareRemoteRunner stages
   // these exact bytes at remoteBinary before launch.
   const controllerRunnerBinary = remoteTarget
-    ? input.runnerRemoteBinaryPath?.trim() || (useBundledCursorImageAssets ? bundledRemoteRunnerBinary() : resolvePaperclipRunnerBinary())
+    ? input.runnerRemoteBinaryPath?.trim() || remotePiCompanion?.runnerBinary || (useBundledCursorImageAssets ? bundledRemoteRunnerBinary() : resolvePaperclipRunnerBinary())
     : resolvePaperclipRunnerBinary();
   const explicitRemoteCodex = input.runnerRemoteCodexPath?.trim() || null;
   const remoteCodexNpmSpec = input.runnerRemoteCodexNpmSpec?.trim() || null;
@@ -11761,7 +11783,7 @@ async function createRunnerdBackendWithinSessionClaim(
       if (!existsSync(sourceBinary)) {
         throw new Error("runner_remote_artifact_unavailable");
       }
-      if (!explicitRemoteBinary) {
+      if (!explicitRemoteBinary && !remotePiCompanion) {
         const platform = await remoteCommandRunner.execute({
           command: "sh",
           args: ["-c", "uname -s; uname -m"],
@@ -13019,6 +13041,7 @@ async function createRunnerdBackendWithinSessionClaim(
                 : resolveAcpxQualification(input.execution.provider, process.env),
               acpxPermissionMode: input.execution.provider.permissionMode,
               acpxMode: input.execution.provider.mode,
+              piThinkingLevel: input.execution.provider.piThinkingLevel,
               acpxPermissionModePinned:
                 input.execution.schema === "paperclip.native-execution-input.v4" ||
                 input.execution.schema === "paperclip.native-execution-input.v5",

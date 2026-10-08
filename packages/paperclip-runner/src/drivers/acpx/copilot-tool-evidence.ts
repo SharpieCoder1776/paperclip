@@ -8,7 +8,7 @@ import { safeCopilotEditTarget } from "./copilot-permission-context.js";
 const LIMIT = 256;
 const CATEGORY = "copilot_tool_evidence_v1";
 type Fields = Record<string, string | number | boolean | null>;
-interface Tool { kind?: string; input?: string; fields: Fields; invalid?: boolean; semanticInput?: string; semanticReceipt?: SemanticToolReceipt; read?: SingleReadEvidence }
+interface Tool { kind?: string; input?: string; fields: Fields; invalid?: boolean; semanticInput?: string; semanticReceipt?: SemanticToolReceipt; read?: SingleReadEvidence; pendingReadNotice?: boolean }
 const record = (v: unknown): Record<string, unknown> => v !== null && typeof v === "object" && !Array.isArray(v) ? v as Record<string, unknown> : {};
 const identity = (v: unknown): v is string => typeof v === "string" && v.length > 0 && v.length <= 240 && !/[\u0000-\u001f\u007f]/u.test(v);
 const shellIdentity = (v: unknown): v is string => typeof v === "string" && /^[A-Za-z0-9_.-]{1,80}$/u.test(v);
@@ -101,7 +101,13 @@ export function createCopilotToolEvidence(binding: {
         if (state.kind && state.kind !== call.kind) { state.invalid = true; notice("evidence_incomplete", id, { reason: "changed_tool_kind" }); return; }
         state.kind = call.kind;
       }
-      if (state.kind === "read") state.read = updateSingleReadEvidence(state.read, call, binding.workingDirectory);
+      let publishPendingRead = false;
+      if (state.kind === "read") {
+        state.read = updateSingleReadEvidence(state.read, call, binding.workingDirectory);
+        if (state.read.pendingOriginInput && call.tag === "tool_call") state.pendingReadNotice = true;
+        if (state.pendingReadNotice && state.read.pendingOriginInput) return;
+        if (state.pendingReadNotice) { state.pendingReadNotice = false; publishPendingRead = true; }
+      }
       if (call.rawInput !== undefined) {
         // Retain only a bounded digest of the native arguments, never their text.
         let inputDigest: string | undefined;
@@ -113,6 +119,7 @@ export function createCopilotToolEvidence(binding: {
         if (state.input && state.input !== fingerprint) { state.invalid = true; notice("evidence_incomplete", id, { reason: "changed_tool_input" }); return; }
         state.input = fingerprint; state.fields = fields;
       }
+      if (publishPendingRead) notice("tool", id, { ...state.fields, status: "pending", operation: "read", ...(state.read?.targetSha256 ? { readTargetSha256: state.read.targetSha256 } : {}) });
       const status = ["pending", "in_progress", "completed", "failed"].includes(String(call.status)) ? String(call.status) : undefined;
       if (!status) return;
       const fields: Fields = { ...state.fields, status, ...(state.read?.targetSha256 ? { readTargetSha256: state.read.targetSha256 } : {}) };

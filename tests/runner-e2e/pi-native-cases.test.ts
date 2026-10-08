@@ -1,10 +1,63 @@
 import { describe, expect, it } from "vitest";
-import { gradePiNativeAnswers, hasFailedPiWrite, hasPiCrossRootDenial, piNativeTasks } from "./pi-native-cases.js";
+import { gradePiNativeAnswers, gradePiNativeMemory, hasPiNativeMemoryRead, hasFailedPiWrite, hasPiCrossRootDenial, piNativeMemoryPrompt, piNativeTasks } from "./pi-native-cases.js";
 import { runnerMatrix, runnerSuites } from "./catalog.js";
 import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
 
 describe("Pi native Product qualification", () => {
+  it("supplies native write arguments with one authoritative content string and its final LF", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const prompt = piNativeMemoryPrompt(nonce, "/unassigned/denied.txt");
+    expect(prompt.split(nonce)).toHaveLength(2);
+    const encoded = /```json\n(.*?)\n```/s.exec(prompt)![1]!;
+    const args = JSON.parse(encoded);
+    expect(Object.keys(args)).toEqual(["path", "content"]);
+    expect(args.path).toBe("<AGENT_HOME>/memory/pi-native.txt");
+    expect(args.content).toBe(`${nonce}\n`);
+    expect(Buffer.byteLength(args.content)).toBe(33);
+    expect(Buffer.from(args.content).at(-1)).toBe(10);
+    expect(prompt).toContain("Use native read once, without offset or limit");
+    expect(prompt).toContain("Do not retry or work around it");
+  });
+
+  it("requires the current nonce and exactly one LF at every memory readback", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    expect(gradePiNativeMemory(`${nonce}\n`, nonce)).toBe(true);
+    for (const wrong of [undefined, null, {}, nonce, `${nonce}\n\n`, `${nonce}\r\n`, `${nonce}\\n`, `${nonce}\\u000a`, `${"f".repeat(32)}\n`]) {
+      expect(gradePiNativeMemory(wrong, nonce)).toBe(false);
+    }
+  });
+  it("requires a completed native read and rejects a shell shortcut or missing receipt", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const read = { eventType: "tool.execution.completed", payload: { prpEvent: { payload: {
+      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "read-1", target: null, readOnly: true, outputTruncated: false, output: JSON.stringify({ content: [{ type: "text", text: `${nonce}\n` }] }),
+    } } } };
+    expect(hasPiNativeMemoryRead([read], nonce)).toBe(true);
+    const change = (patch: Record<string, unknown>) => ({ ...read, payload: { prpEvent: { payload: { ...read.payload.prpEvent.payload, ...patch } } } });
+    expect(hasPiNativeMemoryRead([change({ target: "bootstrap.md", output: JSON.stringify({ content: [{ type: "text", text: "bootstrap instructions" }] }) }), read], nonce)).toBe(true);
+    for (const rows of [[], [{}], [read, read], [change({ target: undefined })], [change({ status: "failed" })], [change({ transport: "mcp" })], [change({ executionId: "" })], [change({ schema: "untrusted" })], [change({ target: "another-file.txt" })], [change({ output: "malformed" })], [change({ outputTruncated: true })], [change({ readOnly: false })], [change({ output: JSON.stringify({ content: [{ type: "text", text: "unrelated-file" }] }) })], [change({ output: JSON.stringify({ content: [{ type: "text", text: nonce }] }) })], [change({ name: "bash", operation: "execute" })], [read, change({ name: "bash", operation: "execute" })]]) {
+      expect(hasPiNativeMemoryRead(rows, nonce)).toBe(false);
+    }
+  });
+
+  it("binds the remote memory read to the exact agent and current run", () => {
+    const nonce = "0123456789abcdef0123456789abcdef";
+    const remoteRun = { agentId: "11111111-1111-4111-8111-111111111111", runId: "22222222-2222-4222-8222-222222222222" };
+    const target = `.paperclip-runtime/agent-files/${remoteRun.agentId}/${remoteRun.runId}/memory/pi-native.txt`;
+    const read = (patch: Record<string, unknown> = {}) => ({ eventType: "tool.execution.completed", payload: { prpEvent: { payload: {
+      schema: "paperclip.tool.execution.v1", transport: "builtin", name: "read", operation: "read", status: "completed", executionId: "remote-read-1", target, readOnly: true, outputTruncated: false, output: JSON.stringify({ content: [{ type: "text", text: `${nonce}\n` }] }), ...patch,
+    } } } });
+    expect(hasPiNativeMemoryRead([read()], nonce, remoteRun)).toBe(true);
+    expect(hasPiNativeMemoryRead([read({ target: "bootstrap.md", output: JSON.stringify({ content: [{ type: "text", text: "bootstrap" }] }) }), read()], nonce, remoteRun)).toBe(true);
+    expect(hasPiNativeMemoryRead([read()], nonce)).toBe(false);
+    for (const patch of [{ target: null }, { target: "memory/pi-native.txt" }, { target: `${target}.bak` }, { target: target.replace(remoteRun.agentId, remoteRun.runId) }, { target: target.replace(remoteRun.runId, remoteRun.agentId) }, { output: JSON.stringify({ content: [{ type: "text", text: nonce }] }) }, { status: "failed" }, { outputTruncated: true }]) {
+      expect(hasPiNativeMemoryRead([read(patch)], nonce, remoteRun)).toBe(false);
+    }
+    expect(hasPiNativeMemoryRead([read(), read()], nonce, remoteRun)).toBe(false);
+    expect(hasPiNativeMemoryRead([read(), read({ name: "bash", operation: "execute" })], nonce, remoteRun)).toBe(false);
+    expect(hasPiNativeMemoryRead([read()], nonce, { ...remoteRun, runId: "../other-run" })).toBe(false);
+  });
+
   it("selects five local and five remote Pi cases without changing the basic extended matrix", () => {
     const suite = runnerSuites.find(row => row.id === "pi-native")!;
     expect(suite.manualOnly).toBe(true); expect(suite.expectedMatrixSize).toBe(10);
@@ -29,9 +82,9 @@ describe("Pi native Product qualification", () => {
   it("admits explicit local and remote Pi native candidates and discards ambient admission", () => {
     const cell = runnerMatrix.find(row => row.suite.id === "pi-native")!;
     const source = { PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" };
-    expect(JSON.parse(buildRunnerE2EProcessEnvironment(source, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent: "pi", model: cell.profile.model }]);
+    expect(buildRunnerE2EProcessEnvironment(source, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
     const remote = runnerMatrix.find(row => row.suite.id === "pi-native" && row.environment.id === "daytona")!;
-    expect(JSON.parse(buildRunnerE2EProcessEnvironment(source, [remote]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent: "pi", model: remote.profile.model }]);
+    expect(buildRunnerE2EProcessEnvironment(source, [remote]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
     expect(buildRunnerE2EProcessEnvironment(source, []).PAPERCLIP_RUNNER_ACPX_QUALIFICATION).toBeUndefined();
     for (const changed of [
       { ...cell, suite: { ...cell.suite, manualOnly: false } },
