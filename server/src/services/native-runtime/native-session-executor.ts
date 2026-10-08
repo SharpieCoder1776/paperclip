@@ -12868,239 +12868,8 @@ async function createRunnerdBackendWithinSessionClaim(
     if (!current) throw new Error("native_session_tool_authority_unavailable");
     return current.execute(call);
   };
-  const backend = createNativeSessionBackend(runnerExecution, {
-    runnerInstanceId:
-      retainedTransition?.runnerInstanceId ?? input.runnerInstanceId,
-    environment: effectiveRunnerEnvironment,
-    workingDirectoryAuthority: remoteTarget
-      ? "remote_runner"
-      : "local_filesystem",
-    onSpawn: input.onSpawn,
-    dynamicTools,
-    completionFeedback: async (result) => {
-      const current = sessionToolAuthorityEpochs.get(sessionScopeId);
-      if (!current) throw new Error("native_session_tool_authority_unavailable");
-      await current.definitions(); // Reject a revoked run authority before reading task state.
-      return nativeCompletionFeedback(input.db, current.runId, result);
-    },
-    dynamicToolHandler: executeCurrentToolAuthority,
-    acpxDynamicToolHandler: executeCurrentToolAuthority,
-    opencodeRuntimeDirectory: resolve(
-      resolvePaperclipInstanceRoot(),
-      "runtime",
-      "paperclip-runner",
-      "opencode",
-    ),
-    acpxRuntimeDirectory: resolve(
-      resolvePaperclipInstanceRoot(),
-      "runtime",
-      "paperclip-runner",
-      "acpx",
-    ),
-    codexTransportFactory: (recoveryContext) =>
-      createRunnerdCodexTransport({
-        onSpawn: input.onSpawn,
-        provider:
-          input.execution.provider.kind === "codex"
-            ? "codex"
-            : input.execution.provider.kind === "opencode"
-              ? "opencode"
-              : input.execution.provider.kind === "claude_managed"
-                ? "claude_managed"
-                : input.execution.provider.kind === "aws_agentcore"
-                  ? "aws_agentcore"
-                  : input.execution.provider.kind === "acpx"
-                    ? "acpx"
-                    : undefined,
-        ...(input.execution.provider.kind === "acpx"
-          ? {
-              acpxAgent: input.execution.provider.agent,
-              // Read only the server operator environment, never agent/runtime env.
-              acpxCandidateProfile: resolveAcpxQualification(input.execution.provider, process.env),
-              acpxPermissionMode: input.execution.provider.permissionMode,
-              acpxMode: input.execution.provider.mode,
-              acpxPermissionModePinned:
-                input.execution.schema === "paperclip.native-execution-input.v4" ||
-                input.execution.schema === "paperclip.native-execution-input.v5",
-              acpxRuntimeDirectory: remoteRunnerFilesystemRoot
-                ? posix.join(remoteRunnerFilesystemRoot, "acpx")
-                : resolve(
-                    resolvePaperclipInstanceRoot(),
-                    "runtime",
-                    "paperclip-runner",
-                    "acpx",
-                  ),
-            }
-          : {}),
-        ...(input.execution.provider.kind === "opencode"
-          ? {
-              opencodePermissionMode: input.execution.provider.permissionMode,
-            }
-          : {}),
-        ...(input.execution.provider.kind === "claude_managed"
-          ? {
-              managedProfile: {
-                ...input.execution.provider.managedProfile,
-                maxSessionListCostUsd:
-                  input.execution.provider.maxSessionListCostUsd,
-                model: input.execution.provider.model,
-              },
-            }
-          : {}),
-        ...(input.execution.provider.kind === "aws_agentcore"
-          ? {
-              agentCoreProfile: {
-                ...input.execution.provider.agentCoreProfile,
-                maxEstimatedSessionCostUsd:
-                  input.execution.provider.maxEstimatedSessionCostUsd,
-                maxIterations:
-                  input.execution.provider.invocationLimits.maxIterations,
-                maxOutputTokens:
-                  input.execution.provider.invocationLimits.maxOutputTokens,
-                timeoutSeconds:
-                  input.execution.provider.invocationLimits.timeoutSeconds,
-                model: input.execution.provider.model,
-              },
-            }
-          : {}),
-        ...(expectedProviderPackManifest && stagedRemoteProviderPackRoot
-          ? {
-              providerNodeCommand: posix.join(
-                stagedRemoteProviderPackRoot,
-                expectedProviderPackManifest.payload.artifacts.nodeCommand.path,
-              ),
-              providerNodeCommandSha256:
-                expectedProviderPackManifest.payload.artifacts.nodeCommand
-                  .sha256,
-              providerPackAuthorityDigest: expectedProviderPackManifest.digest,
-              opencodeCommand: posix.join(
-                stagedRemoteProviderPackRoot,
-                expectedProviderPackManifest.payload.artifacts
-                  .opencodeExecutable.path,
-              ),
-              opencodeCommandSha256:
-                expectedProviderPackManifest.payload.artifacts
-                  .opencodeExecutable.sha256,
-              opencodeProxyPath: posix.join(
-                stagedRemoteProviderPackRoot,
-                expectedProviderPackManifest.payload.artifacts.opencodeProxy
-                  .path,
-              ),
-              opencodeProxySha256:
-                expectedProviderPackManifest.payload.artifacts.opencodeProxy
-                  .sha256,
-              acpxSidecarPath: posix.join(
-                stagedRemoteProviderPackRoot,
-                expectedProviderPackManifest.payload.artifacts.acpxSidecar.path,
-              ),
-              acpxSidecarSha256:
-                expectedProviderPackManifest.payload.artifacts.acpxSidecar
-                  .sha256,
-            }
-          : {}),
-        stateDirectory: root,
-        runnerStateDirectory: remoteStateDirectory,
-        readRunnerState:
-          remoteStateDirectory && remoteCommandRunner
-            ? () =>
-                readRemoteRunnerState({
-                  runner: remoteCommandRunner,
-                  stateDirectory: remoteStateDirectory,
-                })
-            : undefined,
-        prepareExternalRunnerState,
-        archiveExternalRunnerState,
-        runnerBinary: controllerRunnerBinary,
-        codexCommand: remoteCodexBinary ?? undefined,
-        sourceCodexHome: remoteTarget
-          ? resolveSourceCodexHome(resolveNativeProviderEnvironment(input.execution.provider, input.runnerEnvironment))
-          : undefined,
-        runnerProcessLauncher: remoteProcessLauncher,
-        runnerReconnectGraceMs: remoteTarget ? 120_000 : undefined,
-        adoptExistingRunner: adoptedProcess,
-        environment: effectiveRunnerEnvironment,
-        onDiagnostic: (message) => {
-          void input.onLog?.(
-            "stderr",
-            `[paperclip-runner] runnerd diagnostic: ${redactSensitiveText(message).slice(-4_096)}\n`,
-          );
-        },
-        lifecyclePolicy: input.execution.session.lifecyclePolicy,
-        runtimeContext:
-          "runtimeContext" in input.execution
-            ? input.execution.runtimeContext
-            : null,
-        runnerRuntimeContext: remoteRuntimeContext,
-        baseInstructions: recoveryContext?.baseInstructions,
-        runnerFilesystemRoot: remoteRunnerFilesystemRoot ?? undefined,
-        resumeWorkingDirectory: runnerExecution.workspace.cwd,
-        externallySandboxed: remoteTarget?.transport === "sandbox",
-        opencodeRuntimeDirectory: remoteRunnerFilesystemRoot
-          ? posix.join(remoteRunnerFilesystemRoot, "opencode")
-          : undefined,
-        resumeDynamicTools: dynamicTools,
-        resumeCompletionContract: {
-          revision: input.execution.completionContract.contract.revision,
-          criterionIds:
-            input.execution.completionContract.contract.criteria.map(
-              (criterion) => criterion.id,
-            ),
-        },
-        resumeActiveTurnId:
-          recoveryContext?.persistedSession?.activeTurnId ?? null,
-        resumeProviderSession: recoveryContext?.persistedSession,
-        providerRecoveryPolicy:
-          recoveryContext?.providerRecoveryPolicy ??
-          (input.execution.provider.kind === "acpx" &&
-          input.execution.interactionResponses.length > 0
-            ? "allow_replacement_after_governed_wait"
-            : undefined),
-        prpIdentity: {
-          runnerInstanceId: effectiveRunnerInstanceId,
-          environmentLeaseId: effectiveEnvironmentLeaseId,
-          runId: input.execution.binding.runId,
-          normalizedSessionId:
-            input.execution.session.normalizedSessionId ??
-            `session-${input.execution.binding.runId}`,
-          turnId: `turn-${input.execution.binding.runId}`,
-          itemId: `item-${input.execution.binding.runId}`,
-        },
-        warmTransitionRegistrationMode: retainedTransition
-          ? "routed_connect"
-          : undefined,
-        authorizeWarmTransitionRecovery: retainedTransition
-          ? async (
-              stage:
-                "before_bootstrap" | "before_spawn" | "before_authentication",
-            ) => {
-              if (!recoveryPending) return;
-              const current = await verifyWarmTransitionRestart(input);
-              if (
-                current.transitionId !== retainedTransition.transitionId ||
-                (stage === "before_bootstrap" &&
-                  current.stateFingerprint !==
-                    retainedTransition.stateFingerprint)
-              ) {
-                throw new Error(
-                  "native_runner_warm_transition_recovery_unproven",
-                );
-              }
-            }
-          : undefined,
-        onWarmTransitionRecoveryCompleted: retainedTransition
-          ? (completed: { transitionId: string }) => {
-              // Only the package's fresh completed new-authority snapshot can
-              // reach this callback. A tombstone or caller hint cannot retire
-              // the server's pending-recovery admission checks.
-              if (completed?.transitionId !== retainedTransition.transitionId) {
-                throw new Error(
-                  "native_runner_warm_transition_recovery_unproven",
-                );
-              }
-              recoveryPending = false;
-            }
-          : undefined,
-        controlPlaneRegistration: async (authority, attachmentIdentity) => {
+  // Shared authenticated PRP transport; launchers decide where the Runner process lives.
+  const controlPlaneRegistration: NonNullable<NonNullable<Parameters<typeof createRunnerdCodexTransport>[0]>["controlPlaneRegistration"]> = async (authority, attachmentIdentity) => {
           if (retainedTransition && recoveryPending) {
             const current = await verifyWarmTransitionRestart(input);
             if (
@@ -13346,7 +13115,240 @@ async function createRunnerdBackendWithinSessionClaim(
               };
             },
           );
+        };
+  const backend = createNativeSessionBackend(runnerExecution, {
+    runnerInstanceId:
+      retainedTransition?.runnerInstanceId ?? input.runnerInstanceId,
+    environment: effectiveRunnerEnvironment,
+    workingDirectoryAuthority: remoteTarget
+      ? "remote_runner"
+      : "local_filesystem",
+    onSpawn: input.onSpawn,
+    dynamicTools,
+    completionFeedback: async (result) => {
+      const current = sessionToolAuthorityEpochs.get(sessionScopeId);
+      if (!current) throw new Error("native_session_tool_authority_unavailable");
+      await current.definitions(); // Reject a revoked run authority before reading task state.
+      return nativeCompletionFeedback(input.db, current.runId, result);
+    },
+    dynamicToolHandler: executeCurrentToolAuthority,
+    acpxDynamicToolHandler: executeCurrentToolAuthority,
+    opencodeRuntimeDirectory: resolve(
+      resolvePaperclipInstanceRoot(),
+      "runtime",
+      "paperclip-runner",
+      "opencode",
+    ),
+    acpxRuntimeDirectory: resolve(
+      resolvePaperclipInstanceRoot(),
+      "runtime",
+      "paperclip-runner",
+      "acpx",
+    ),
+    codexTransportFactory: (recoveryContext) =>
+      createRunnerdCodexTransport({
+        onSpawn: input.onSpawn,
+        provider:
+          input.execution.provider.kind === "codex"
+            ? "codex"
+            : input.execution.provider.kind === "opencode"
+              ? "opencode"
+              : input.execution.provider.kind === "claude_managed"
+                ? "claude_managed"
+                : input.execution.provider.kind === "aws_agentcore"
+                  ? "aws_agentcore"
+                  : input.execution.provider.kind === "acpx"
+                    ? "acpx"
+                    : undefined,
+        ...(input.execution.provider.kind === "acpx"
+          ? {
+              acpxAgent: input.execution.provider.agent,
+              // Read only the server operator environment, never agent/runtime env.
+              acpxCandidateProfile: resolveAcpxQualification(input.execution.provider, process.env),
+              acpxPermissionMode: input.execution.provider.permissionMode,
+              acpxMode: input.execution.provider.mode,
+              acpxPermissionModePinned:
+                input.execution.schema === "paperclip.native-execution-input.v4" ||
+                input.execution.schema === "paperclip.native-execution-input.v5",
+              acpxRuntimeDirectory: remoteRunnerFilesystemRoot
+                ? posix.join(remoteRunnerFilesystemRoot, "acpx")
+                : resolve(
+                    resolvePaperclipInstanceRoot(),
+                    "runtime",
+                    "paperclip-runner",
+                    "acpx",
+                  ),
+            }
+          : {}),
+        ...(input.execution.provider.kind === "opencode"
+          ? {
+              opencodePermissionMode: input.execution.provider.permissionMode,
+            }
+          : {}),
+        ...(input.execution.provider.kind === "claude_managed"
+          ? {
+              managedProfile: {
+                ...input.execution.provider.managedProfile,
+                maxSessionListCostUsd:
+                  input.execution.provider.maxSessionListCostUsd,
+                model: input.execution.provider.model,
+              },
+            }
+          : {}),
+        ...(input.execution.provider.kind === "aws_agentcore"
+          ? {
+              agentCoreProfile: {
+                ...input.execution.provider.agentCoreProfile,
+                maxEstimatedSessionCostUsd:
+                  input.execution.provider.maxEstimatedSessionCostUsd,
+                maxIterations:
+                  input.execution.provider.invocationLimits.maxIterations,
+                maxOutputTokens:
+                  input.execution.provider.invocationLimits.maxOutputTokens,
+                timeoutSeconds:
+                  input.execution.provider.invocationLimits.timeoutSeconds,
+                model: input.execution.provider.model,
+              },
+            }
+          : {}),
+        ...(expectedProviderPackManifest && stagedRemoteProviderPackRoot
+          ? {
+              providerNodeCommand: posix.join(
+                stagedRemoteProviderPackRoot,
+                expectedProviderPackManifest.payload.artifacts.nodeCommand.path,
+              ),
+              providerNodeCommandSha256:
+                expectedProviderPackManifest.payload.artifacts.nodeCommand
+                  .sha256,
+              providerPackAuthorityDigest: expectedProviderPackManifest.digest,
+              opencodeCommand: posix.join(
+                stagedRemoteProviderPackRoot,
+                expectedProviderPackManifest.payload.artifacts
+                  .opencodeExecutable.path,
+              ),
+              opencodeCommandSha256:
+                expectedProviderPackManifest.payload.artifacts
+                  .opencodeExecutable.sha256,
+              opencodeProxyPath: posix.join(
+                stagedRemoteProviderPackRoot,
+                expectedProviderPackManifest.payload.artifacts.opencodeProxy
+                  .path,
+              ),
+              opencodeProxySha256:
+                expectedProviderPackManifest.payload.artifacts.opencodeProxy
+                  .sha256,
+              acpxSidecarPath: posix.join(
+                stagedRemoteProviderPackRoot,
+                expectedProviderPackManifest.payload.artifacts.acpxSidecar.path,
+              ),
+              acpxSidecarSha256:
+                expectedProviderPackManifest.payload.artifacts.acpxSidecar
+                  .sha256,
+            }
+          : {}),
+        stateDirectory: root,
+        runnerStateDirectory: remoteStateDirectory,
+        readRunnerState:
+          remoteStateDirectory && remoteCommandRunner
+            ? () =>
+                readRemoteRunnerState({
+                  runner: remoteCommandRunner,
+                  stateDirectory: remoteStateDirectory,
+                })
+            : undefined,
+        prepareExternalRunnerState,
+        archiveExternalRunnerState,
+        runnerBinary: controllerRunnerBinary,
+        codexCommand: remoteCodexBinary ?? undefined,
+        sourceCodexHome: remoteTarget
+          ? resolveSourceCodexHome(resolveNativeProviderEnvironment(input.execution.provider, input.runnerEnvironment))
+          : undefined,
+        runnerProcessLauncher: remoteProcessLauncher,
+        runnerReconnectGraceMs: remoteTarget ? 120_000 : undefined,
+        adoptExistingRunner: adoptedProcess,
+        environment: effectiveRunnerEnvironment,
+        onDiagnostic: (message) => {
+          void input.onLog?.(
+            "stderr",
+            `[paperclip-runner] runnerd diagnostic: ${redactSensitiveText(message).slice(-4_096)}\n`,
+          );
         },
+        lifecyclePolicy: input.execution.session.lifecyclePolicy,
+        runtimeContext:
+          "runtimeContext" in input.execution
+            ? input.execution.runtimeContext
+            : null,
+        runnerRuntimeContext: remoteRuntimeContext,
+        baseInstructions: recoveryContext?.baseInstructions,
+        runnerFilesystemRoot: remoteRunnerFilesystemRoot ?? undefined,
+        resumeWorkingDirectory: runnerExecution.workspace.cwd,
+        externallySandboxed: remoteTarget?.transport === "sandbox",
+        opencodeRuntimeDirectory: remoteRunnerFilesystemRoot
+          ? posix.join(remoteRunnerFilesystemRoot, "opencode")
+          : undefined,
+        resumeDynamicTools: dynamicTools,
+        resumeCompletionContract: {
+          revision: input.execution.completionContract.contract.revision,
+          criterionIds:
+            input.execution.completionContract.contract.criteria.map(
+              (criterion) => criterion.id,
+            ),
+        },
+        resumeActiveTurnId:
+          recoveryContext?.persistedSession?.activeTurnId ?? null,
+        resumeProviderSession: recoveryContext?.persistedSession,
+        providerRecoveryPolicy:
+          recoveryContext?.providerRecoveryPolicy ??
+          (input.execution.provider.kind === "acpx" &&
+          input.execution.interactionResponses.length > 0
+            ? "allow_replacement_after_governed_wait"
+            : undefined),
+        prpIdentity: {
+          runnerInstanceId: effectiveRunnerInstanceId,
+          environmentLeaseId: effectiveEnvironmentLeaseId,
+          runId: input.execution.binding.runId,
+          normalizedSessionId:
+            input.execution.session.normalizedSessionId ??
+            `session-${input.execution.binding.runId}`,
+          turnId: `turn-${input.execution.binding.runId}`,
+          itemId: `item-${input.execution.binding.runId}`,
+        },
+        warmTransitionRegistrationMode: retainedTransition
+          ? "routed_connect"
+          : undefined,
+        authorizeWarmTransitionRecovery: retainedTransition
+          ? async (
+              stage:
+                "before_bootstrap" | "before_spawn" | "before_authentication",
+            ) => {
+              if (!recoveryPending) return;
+              const current = await verifyWarmTransitionRestart(input);
+              if (
+                current.transitionId !== retainedTransition.transitionId ||
+                (stage === "before_bootstrap" &&
+                  current.stateFingerprint !==
+                    retainedTransition.stateFingerprint)
+              ) {
+                throw new Error(
+                  "native_runner_warm_transition_recovery_unproven",
+                );
+              }
+            }
+          : undefined,
+        onWarmTransitionRecoveryCompleted: retainedTransition
+          ? (completed: { transitionId: string }) => {
+              // Only the package's fresh completed new-authority snapshot can
+              // reach this callback. A tombstone or caller hint cannot retire
+              // the server's pending-recovery admission checks.
+              if (completed?.transitionId !== retainedTransition.transitionId) {
+                throw new Error(
+                  "native_runner_warm_transition_recovery_unproven",
+                );
+              }
+              recoveryPending = false;
+            }
+          : undefined,
+        controlPlaneRegistration,
       }).transport,
   });
   const boundManagedSessions = new WeakSet<NativeSession>();
