@@ -51,7 +51,7 @@ function recording(paths: QuestionPath[] = ["provider", "semantic"]) {
     if (!provider) runs.push(newRun(card));
   }
   runs.at(-1)!.status = "succeeded";
-  snap("final", [{ key: "welcome-note", latestRevisionId: "revision", body: "Welcome to the afternoon meetup, AMBERnonce." }]);
+  snap("final", [{ key: "welcome-note", latestRevisionId: "revision", body: "Welcome to the afternoon meetup. Use AMBERnonce." }]);
   return points;
 }
 const failed = (r: any[]) => gradeQuestionResume(r, "AMBERnonce").filter(c => !c.passed).map(c => c.id);
@@ -75,6 +75,14 @@ describe("native question/resume path qualification", () => {
     expect(failed(r)).toEqual([]);
     expect(gradeContinuation({ ...continuationScenario("question-answer-resume", "nonce"), runtimeMode: "native", checkpoints: r }).filter(c => !c.passed)).toEqual([]);
     expect(gradeLifecycleBaseline(r).filter(c => !c.passed)).toEqual([]);
+  });
+  it.each([
+    "Welcome to the afternoon meetup, AMBERnonce.",
+    "Welcome to the afternoon meetup. Use AMBERnonce",
+  ])("rejects a shortened supplied reference in the saved document: %s", body => {
+    const r = recording();
+    r[2].documents[0].body = body;
+    expect(failed(r)).toContain("question-resume.complete-evidence");
   });
   it("does not admit an optional Other field on the semantic path", () => {
     const r = recording(["semantic", "semantic"]);
