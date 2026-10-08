@@ -10638,6 +10638,7 @@ export function heartbeatService(
   async function claimQueuedRun(
     run: typeof heartbeatRuns.$inferSelect,
     companyAgents?: AgentOrgRow[],
+    deferredPostCommitEffects?: WakeQueuePostCommitEffect[],
   ) {
     if (run.status !== "queued") return run;
     // Claim is the first execution boundary. startedAt survives same-run
@@ -10658,7 +10659,9 @@ export function heartbeatService(
         await appendRunEvent(cancelled, {
           eventType: "lifecycle", stream: "system", level: "warn", message: reason,
         });
-        await releaseIssueExecutionAndPromote(cancelled, { suppressImmediateRecovery: true });
+        await releaseIssueExecutionAndPromote(cancelled, {
+          suppressImmediateRecovery: true, deferredPostCommitEffects,
+        });
       }
       return null;
     }
@@ -13332,6 +13335,7 @@ export function heartbeatService(
     // Cancelled after the start lock is released: cancelRunInternal promotes the
     // agent's next queued run, which takes this same lock.
     const rejectedClaims: Array<{ run: typeof heartbeatRuns.$inferSelect; err: HttpError }> = [];
+    const deferredPostCommitEffects: WakeQueuePostCommitEffect[] = [];
 
     return withAgentStartLock(agentId, async () => {
       const agent = await getAgent(agentId);
@@ -13445,7 +13449,7 @@ export function heartbeatService(
         if (claimedRuns.length >= availableSlots) break;
         let claimed: typeof heartbeatRuns.$inferSelect | null;
         try {
-          claimed = await claimQueuedRun(queuedRun, companyAgents);
+          claimed = await claimQueuedRun(queuedRun, companyAgents, deferredPostCommitEffects);
         } catch (err) {
           if (isPermanentClaimRejection(err)) {
             rejectedClaims.push({ run: queuedRun, err });
@@ -13481,7 +13485,15 @@ export function heartbeatService(
         });
       }
       return claimedRuns;
-    }).finally(() => cancelRejectedQueuedRuns(rejectedClaims));
+    }).finally(async () => {
+      // Release transactions may promote deferred input for this same agent.
+      // Dispatch it only after withAgentStartLock has released the start lock.
+      try {
+        await applyWakeQueuePostCommitEffects(deferredPostCommitEffects);
+      } finally {
+        await cancelRejectedQueuedRuns(rejectedClaims);
+      }
+    });
   }
 
   // Await every background heartbeat execution that is currently in flight. A
@@ -20337,7 +20349,10 @@ export function heartbeatService(
 
   async function releaseIssueExecutionAndPromote(
     run: Pick<typeof heartbeatRuns.$inferSelect, "id" | "companyId">,
-    options: { suppressImmediateRecovery?: boolean } = {},
+    options: {
+      suppressImmediateRecovery?: boolean;
+      deferredPostCommitEffects?: WakeQueuePostCommitEffect[];
+    } = {},
   ) {
     try {
       const source = await getRun(run.id);
@@ -20349,7 +20364,11 @@ export function heartbeatService(
         // while continuation classification blocks periodic generic retries.
         suppressImmediateRecovery: options.suppressImmediateRecovery || isAiAuthenticationBlocked(source),
       });
-      await applyWakeQueuePostCommitEffects(postCommitEffects);
+      if (options.deferredPostCommitEffects) {
+        options.deferredPostCommitEffects.push(...postCommitEffects);
+      } else {
+        await applyWakeQueuePostCommitEffects(postCommitEffects);
+      }
       const completed = await getRun(run.id);
       const issueId = readNonEmptyString(completed?.contextSnapshot?.issueId)
         ?? readNonEmptyString(completed?.contextSnapshot?.taskId) ?? completed?.nativeIssueId;

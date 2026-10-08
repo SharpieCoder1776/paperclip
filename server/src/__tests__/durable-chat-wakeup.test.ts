@@ -191,7 +191,7 @@ describe("durable inbound chat scheduler receipts", () => {
     };
   }
 
-  it.each(["unmentioned", "mentioned", "coalesced", "recovery"])("checks Slack mentions after a real heartbeat queue wait (%s)", async (scenario) => {
+  it.each(["unmentioned", "mentioned", "coalesced", "recovery", "deferred"])("checks Slack mentions after a real heartbeat queue wait (%s)", async (scenario) => {
     const mentioned = scenario === "mentioned" || scenario === "coalesced";
     const allowed = scenario === "mentioned" || scenario === "recovery";
     const f = await fixture();
@@ -222,28 +222,49 @@ describe("durable inbound chat scheduler receipts", () => {
       await db.update(heartbeatRuns).set({ startedAt: originalStartedAt })
         .where(eq(heartbeatRuns.id, receipt.runId!));
     }
-    if (scenario === "coalesced") {
+    let deferredRequestId: string | undefined;
+    if (scenario === "coalesced" || scenario === "deferred") {
       const second = f.request();
       await db.insert(issueComments).values({ id: second.commentId, companyId: f.companyId, issueId: f.issueId,
-        authorUserId: "board-user", body: "Unmentioned follow-up" });
+        authorUserId: "board-user", body: scenario === "deferred" ? "@bot follow-up" : "Unmentioned follow-up" });
       const [secondDelivery] = await db.insert(chatDeliveries).values({ companyId: f.companyId, endpointId,
         providerEventId: randomUUID(), deduplicationKey: randomUUID(), eventKind: "direct_message", state: "processed",
-        normalizedEvent: { trigger: "direct_message", message: { mentionedBot: false } } }).returning();
+        normalizedEvent: { trigger: "direct_message", message: { mentionedBot: scenario === "deferred" } } }).returning();
       await db.insert(chatActions).values({ id: second.id, companyId: f.companyId, endpointId,
         deliveryId: secondDelivery.id, kind: "inbound_wakeup", providerActionId: randomUUID(), status: "processed",
         payload: { issueId: f.issueId, commentId: second.commentId } });
       await db.update(issues).set({ executionRunId: receipt.runId, executionAgentNameKey: "maya", executionLockedAt: new Date() })
         .where(eq(issues.id, f.issueId));
+      if (scenario === "deferred") {
+        // Seed the persisted queue state left by a deferred follow-up before
+        // its predecessor is returned to the unstarted queue.
+        await db.update(heartbeatRuns).set({ status: "running" }).where(eq(heartbeatRuns.id, receipt.runId!));
+        runningProcesses.set(receipt.runId!, { child: {} as never, graceSec: 0, processGroupId: null });
+        liveRunIds.add(receipt.runId!);
+      }
       await f.wake(second);
       const [coalesced] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, second.id));
-      expect(coalesced).toMatchObject({ status: "coalesced", runId: receipt.runId });
+      if (scenario === "deferred") {
+        expect(coalesced).toMatchObject({ status: "deferred_issue_execution", runId: null });
+        deferredRequestId = second.id;
+        runningProcesses.delete(receipt.runId!);
+        liveRunIds.delete(receipt.runId!);
+        await db.update(heartbeatRuns).set({ status: "queued" }).where(eq(heartbeatRuns.id, receipt.runId!));
+      } else {
+        expect(coalesced).toMatchObject({ status: "coalesced", runId: receipt.runId });
+      }
     }
     await db.update(chatEndpoints).set({ requireAtMention: true }).where(eq(chatEndpoints.id, endpointId));
     await f.heartbeat.cancelRun(f.activeRunId, "Fixture slot released", { suppressImmediateRecovery: true });
     await f.heartbeat.drainActiveRunExecutions();
     const [run] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, receipt.runId!));
     expect(run.status).toBe(allowed ? "succeeded" : "cancelled");
-    expect(execute).toHaveBeenCalledTimes(allowed ? 1 : 0);
+    expect(execute).toHaveBeenCalledTimes(allowed || scenario === "deferred" ? 1 : 0);
+    if (deferredRequestId) {
+      const [promoted] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, deferredRequestId));
+      const [followup] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, promoted.runId!));
+      expect(followup.status).toBe("succeeded");
+    }
     if (!allowed) expect(run.errorCode).toBe("chat_mention_required");
     if (scenario === "recovery") expect(run.startedAt).toEqual(originalStartedAt);
   });
