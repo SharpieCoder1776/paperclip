@@ -366,3 +366,15 @@ The expired native question must retain its versioned cancellation receipt with
 zero answers, bound to the original payload, card, company, task and source run.
 A missing result, answer actor, changed payload or submitted answer fails the
 oracle. Correcting this assertion does not regrade historical failed campaigns.
+
+`hermes-image-input` uploads a synthetic, non-secret PNG through the ordinary
+task creation UI. Its filename contains only the fixture nonce; no answer or
+instruction is placed in PNG text metadata. The expected code stays in the
+grader and is not sent in model text. Attachment downloads require the expected
+company, task, MIME, bounded size and SHA-256 before reading bytes. Persisted
+evidence retains sanitized metadata and independent content hashes, not an
+unmarked raw image or provider payload. The existing final-state screenshot
+policy still applies. Qualification is admitted only for explicit Hermes cells
+and their selected exact model. The suite reuses the existing OpenRouter key
+allocation and public company/agent budgets; it does not authorize another
+secret, a paid retry, or unconfigured remote resource creation.

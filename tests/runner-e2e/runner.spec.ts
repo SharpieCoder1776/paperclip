@@ -1,5 +1,5 @@
 import { runPlanTaskFlow } from "./plan-task-flow.js";
-import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesConnectionSuite, isHermesOpenRouterWorkflow, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, runHermesNativeQuestionStop } from "./hermes-api-connections.js";
+import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesConnectionSuite, isHermesOpenRouterWorkflow, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, runHermesNativeQuestionStop, HERMES_IMAGE_INPUT_SUITE, hermesImageChallenge, gradeHermesImageInput } from "./hermes-api-connections.js";
 import { hasAcpxNativeOrigin } from "./acpx-native-origin.js";
 import { isDeepStrictEqual } from "node:util";
 import { assertNativeCompletionSelection, NATIVE_COMPLETION_PREFLIGHT_ENV, verifyNativeCompletionPreflight } from "./native-completion-admission.js";
@@ -1168,6 +1168,9 @@ for (const execution of executions) {
           { timeout: Math.max(1, startedAtMs + deadlineMs - Date.now()) })
           .catch((cause: unknown) => new Error("Could not capture task creation response", { cause }))
         : null;
+      const imageChallenge = execution.suite.id === HERMES_IMAGE_INPUT_SUITE ? hermesImageChallenge(nonce) : null;
+      const imagePath = imageChallenge ? path.join(temporaryRoot, imageChallenge.filename) : null;
+      if (imagePath && imageChallenge) await writeFile(imagePath, imageChallenge.bytes, { flag: "wx", mode: 0o600 });
       const createdTask = await createTaskThroughUi({
           page,
           issuePrefix,
@@ -1176,7 +1179,8 @@ for (const execution of executions) {
           prompt,
           workMode: execution.task.workMode,
           projectName: fixtures.project?.name,
-          requireExplicitTitle: execution.suite.id === "task-titles" && Boolean(title),
+          requireExplicitTitle: (execution.suite.id === "task-titles" && Boolean(title)) || Boolean(imageChallenge),
+          ...(imagePath ? { attachments: [imagePath] } : {}),
         });
       turnSubmissionTimesMs.push(createdTask.submittedAtMs);
 
@@ -3013,6 +3017,27 @@ for (const execution of executions) {
       }
       if (isHermesConnectionSuite(execution.suite.id)) {
         if (!fixtures?.aiConnection || !issue?.id || !hermesApiAccountOwner?.expectedResponsibleUserId) throw new Error("Hermes connection qualification is missing its selected account, expected user or task");
+        if (execution.suite.id === HERMES_IMAGE_INPUT_SUITE) {
+          const attachments = await api.get<Record<string, unknown>[]>(`/api/issues/${issue.id}/attachments`);
+          const image = attachments[0];
+          const expectedImage = hermesImageChallenge(nonce);
+          let downloadedBytes: Buffer = Buffer.alloc(0);
+          if (attachments.length === 1 && typeof image?.id === "string" && image.companyId === fixtures.company.id
+            && image.issueId === issue.id && image.contentType === "image/png"
+            && image.byteSize === expectedImage.bytes.length && image.sha256 === expectedImage.sha256) {
+            const response = await api.request.get(`/api/attachments/${encodeURIComponent(image.id)}/content`);
+            if (response.ok()) downloadedBytes = await response.body();
+          }
+          const events = selectedRuns.length === 1 ? await collectRunEvents<RunEventRecord>((afterSeq, limit) =>
+            api.get(`/api/heartbeat-runs/${selectedRuns[0]!.id}/events?afterSeq=${afterSeq}&limit=${limit}`)) : [];
+          const imageChecks = gradeHermesImageInput({ nonce, companyId: fixtures.company.id, issueId: issue.id,
+            runId: selectedRuns[0]?.id ?? "", attachments, downloadedBytes, events });
+          matcherResults.push(...imageChecks.map(check => ({ matcher: { kind: "json_path" as const, path: `hermesImage.${check.id}`, expected: true },
+            passed: check.passed, detail: "The authorized uploaded image must match its source bytes and be read without a file-tool substitute." })));
+          await writeSanitizedJson(snapshotsDir, "hermes-image-input.json", { attachments,
+            downloadedByteSize: downloadedBytes.length, downloadedSha256: createHash("sha256").update(downloadedBytes).digest("hex"),
+            checks: imageChecks, oracle: "undisclosed-image-pixels-and-independent-authorized-download" }, secrets);
+        }
         const expectedRunStatus = execution.task.flow === "native_question_stop" ? "cancelled" : "succeeded";
         const checks = gradeHermesApiConnection({ companyId: fixtures.company.id, agentId: fixtures.agent.id,
           issueId: issue.id, connectionId: fixtures.aiConnection.connectionId, provider: fixtures.aiConnection.binding.provider,

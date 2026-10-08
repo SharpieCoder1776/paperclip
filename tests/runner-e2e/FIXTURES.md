@@ -398,3 +398,15 @@ run PID/group/start identity supplies ownership for a read-only descendant
 journal; observed owners must retire before cleanup and stay retired through it.
 Cancelled-run cost settlement remains required. Remote Stop is a separate pending
 gate and cannot pass from this local observation.
+
+`hermes-image-input` adds one local and one Daytona image-code cell using a
+separate vision-capable candidate profile. The existing UI helper uploads the
+PNG before creating the assigned task. The code is an eight-character challenge
+rendered only in pixels; prompt and filename disclose no answer. Independent
+checks download the company/task-bound image and compare exact PNG bytes, MIME,
+size and SHA-256. Native tool history allows only semantic completion, task
+context, title and progress operations, rejecting file reads, shell/OCR and
+image-analysis substitutes. The final marker must contain the pictured code
+exactly once. The suite preserves selected-account attribution, settled reported
+cost, bounded budgets, one attempt and verified cleanup. Declared remote coverage
+is pending until the actual Daytona cell passes on a verified immutable image.

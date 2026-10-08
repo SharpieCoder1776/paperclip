@@ -3,7 +3,85 @@ import { runnerMatrix, runnerSuites, suiteDefinitionHash } from "./catalog.js";
 import { buildMatrixJobs, parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
 import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { explicitlyRequestsFileOutput, explicitlyRequestsTaskDocumentOutput } from "../../server/src/services/native-runtime/native-deliverable-feedback.js";
-import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesOpenRouterWorkflow, isHermesConnectionSuite, HERMES_NATIVE_INTERACTION_SUITE, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, hasHermesNativeQuestionStop, hasHermesNativeQuestionStopCard, resolveHermesQualificationBudgetCents } from "./hermes-api-connections.js";
+import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesOpenRouterWorkflow, isHermesConnectionSuite, HERMES_NATIVE_INTERACTION_SUITE, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, hasHermesNativeQuestionStop, hasHermesNativeQuestionStopCard, resolveHermesQualificationBudgetCents, HERMES_IMAGE_INPUT_SUITE, HERMES_IMAGE_INPUT_MODEL, hermesImageChallenge, gradeHermesImageInput } from "./hermes-api-connections.js";
+import { inflateSync } from "node:zlib";
+
+describe("Hermes native image input", () => {
+  const suite = runnerSuites.find(s => s.id === HERMES_IMAGE_INPUT_SUITE)!;
+  const cells = runnerMatrix.filter(e => e.suite.id === suite.id);
+  it("declares one bounded image journey per execution target on a separate vision model", () => {
+    expect(cells).toHaveLength(2);
+    expect(new Set(cells.map(c => c.environment.id))).toEqual(new Set(["local", "daytona"]));
+    expect(suite.manualOnly).toBe(true);
+    expect(isHermesConnectionSuite(suite.id)).toBe(true);
+    expect(cells.every(c => c.profile.model === HERMES_IMAGE_INPUT_MODEL && c.profile.credential === "OPENROUTER_API_KEY"
+      && c.profile.qualificationCandidate === "hermes" && c.task.expectedRunCount === 1 && c.task.automaticRetryPolicy === "single_attempt")).toBe(true);
+    expect(selectRunnerExecutions(parseRunnerSelectors(["--all"])).some(c => c.suite.id === suite.id)).toBe(false);
+    const env = buildRunnerE2EProcessEnvironment({}, [cells[0]!]);
+    expect(JSON.parse(env.PAPERCLIP_RUNNER_ACPX_QUALIFICATION!)).toEqual([{ agent: "hermes", model: HERMES_IMAGE_INPUT_MODEL }]);
+    expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cells[0]!, suite: { ...suite, manualOnly: false } }])).toThrow("explicit");
+    expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cells[0]!, profile: { ...cells[0]!.profile, qualificationCandidate: "pi" } }])).toThrow("explicit");
+    expect(suite.definitionMetadata).toMatchObject({ version: 1, qualification: "pending", providerTurns: 1,
+      maximumAttemptsPerCell: 1, budgetMonthlyCents: 200 });
+  });
+  it("keeps the expected code out of prompt, filename and PNG metadata", () => {
+    const image = hermesImageChallenge("image-fixture");
+    expect(image.code).toMatch(/^[A-F0-9]{8}$/);
+    expect(cells[0]!.task.buildPrompt("image-fixture")).not.toContain(image.code);
+    expect(image.filename).not.toContain(image.code);
+    expect(image.bytes.includes(Buffer.from(image.code))).toBe(false);
+    expect(explicitlyRequestsFileOutput(cells[0]!.task.buildPrompt("image-fixture"))).toBe(false);
+    expect(explicitlyRequestsTaskDocumentOutput(cells[0]!.task.buildPrompt("image-fixture"))).toBe(false);
+    expect(image.bytes.subarray(0, 8).toString("hex")).toBe("89504e470d0a1a0a");
+    const chunks: { name: string; body: Buffer }[] = [];
+    for (let at = 8; at < image.bytes.length;) {
+      const size = image.bytes.readUInt32BE(at);
+      chunks.push({ name: image.bytes.subarray(at + 4, at + 8).toString(), body: image.bytes.subarray(at + 8, at + 8 + size) });
+      at += size + 12;
+    }
+    expect(chunks.map(c => c.name)).toEqual(["IHDR", "IDAT", "IEND"]);
+    expect(chunks[0]!.body.readUInt32BE(0)).toBe(640);
+    expect(chunks[0]!.body.readUInt32BE(4)).toBe(180);
+    const pixels = inflateSync(chunks[1]!.body);
+    expect(pixels.length).toBe((640 * 3 + 1) * 180);
+    expect(pixels.subarray(1, 640 * 3 + 1).every(byte => byte === 255)).toBe(true);
+    expect(pixels.filter(byte => byte === 0).length).toBeGreaterThan(10_000);
+    expect(hermesImageChallenge("image-fixture").bytes).toEqual(image.bytes);
+    expect(hermesImageChallenge("different-fixture").bytes).not.toEqual(image.bytes);
+  });
+  const evidence = () => {
+    const image = hermesImageChallenge("image-fixture");
+    return { nonce: "image-fixture", companyId: "company", issueId: "task", runId: "run", downloadedBytes: image.bytes,
+      attachments: [{ id: "attachment", companyId: "company", issueId: "task", originalFilename: image.filename,
+        contentType: "image/png", byteSize: image.bytes.length, sha256: image.sha256 }],
+      events: [{ runId: "run", eventType: "tool.execution.started", payload: { prpEvent: {
+        schema: "paperclip.prp.event.v1", runId: "run", sourceKind: "runner", sourceInstanceId: "runner", normalizedSessionId: "session",
+        payload: { name: "paperclip_finish", namespace: "paperclip" },
+      } } }],
+    };
+  };
+  it("accepts independently downloaded matching bytes with native semantic completion", () => {
+    expect(gradeHermesImageInput(evidence()).every(c => c.passed)).toBe(true);
+  });
+  it.each(["companyId", "issueId", "originalFilename", "contentType", "sha256"])("rejects an image with the wrong %s", key => {
+    const input = evidence(); Object.assign(input.attachments[0]!, { [key]: "different" });
+    expect(gradeHermesImageInput(input).every(c => c.passed)).toBe(false);
+  });
+  it.each(["missing", "duplicate", "size", "bytes", "no-tools", "file-tool", "foreign-run", "foreign-native-run", "no-runner", "no-session"])("rejects %s evidence", variant => {
+    const input = evidence();
+    if (variant === "missing") input.attachments = [];
+    if (variant === "duplicate") input.attachments.push({ ...input.attachments[0]! });
+    if (variant === "size") input.attachments[0]!.byteSize++;
+    if (variant === "bytes") input.downloadedBytes = Buffer.from("not the image");
+    if (variant === "no-tools") input.events = [];
+    if (variant === "file-tool") input.events[0]!.payload.prpEvent.payload.name = "read_task_attachment";
+    if (variant === "foreign-run") input.events[0]!.runId = "foreign";
+    if (variant === "foreign-native-run") input.events[0]!.payload.prpEvent.runId = "foreign";
+    if (variant === "no-runner") input.events[0]!.payload.prpEvent.sourceInstanceId = "";
+    if (variant === "no-session") input.events[0]!.payload.prpEvent.normalizedSessionId = "";
+    expect(gradeHermesImageInput(input).every(c => c.passed)).toBe(false);
+  });
+});
 
 const settings = vi.hoisted(() => ({ contents: undefined as string | undefined }));
 vi.mock("node:fs", async importOriginal => {

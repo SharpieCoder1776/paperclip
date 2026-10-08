@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
+import { deflateSync } from "node:zlib";
 import type { AiProviderRouting } from "../../packages/shared/src/ai-provider-routing.js";
 import { hasAcpxNativeOrigin } from "./acpx-native-origin.js";
 import type { Page } from "@playwright/test";
@@ -48,8 +49,11 @@ function captureHermesQualificationBudgetCents(): number {
 }
 export const HERMES_API_CONNECTION_BUDGET_CENTS = captureHermesQualificationBudgetCents();
 export const HERMES_NATIVE_INTERACTION_SUITE = "hermes-native-interactions";
+export const HERMES_IMAGE_INPUT_SUITE = "hermes-image-input";
+export const HERMES_IMAGE_INPUT_MODEL = "google/gemini-2.5-flash-lite";
 export const isHermesConnectionSuite = (suiteId: string) =>
-  suiteId === "hermes-api-connections" || suiteId === "hermes-bedrock-connections" || suiteId === HERMES_NATIVE_INTERACTION_SUITE;
+  suiteId === "hermes-api-connections" || suiteId === "hermes-bedrock-connections"
+  || suiteId === HERMES_NATIVE_INTERACTION_SUITE || suiteId === HERMES_IMAGE_INPUT_SUITE;
 export const isHermesOpenRouterWorkflow = (execution: {
   suite: { id: string }; profile: { qualificationCandidate?: string; credential: string };
 }) => execution.suite.id === "extended-harnesses"
@@ -101,6 +105,102 @@ export const hermesNativeQuestionStopTask: RunnerTaskFixture = {
     { kind: "runtime_mode", expected: "native" }, { kind: "environment", expected: execution.environment.id },
   ],
 };
+
+/** An undisclosed code exists only in PNG pixels, never in the filename or prompt. */
+export function hermesImageChallenge(nonce: string) {
+  const code = createHash("sha256").update(`hermes-image-pixels:${nonce}`).digest("hex").slice(0, 8).toUpperCase();
+  const glyphs: Record<string, readonly string[]> = {
+    "0": ["01110", "10001", "10011", "10101", "11001", "10001", "01110"],
+    "1": ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
+    "2": ["01110", "10001", "00001", "00010", "00100", "01000", "11111"],
+    "3": ["11110", "00001", "00001", "01110", "00001", "00001", "11110"],
+    "4": ["00010", "00110", "01010", "10010", "11111", "00010", "00010"],
+    "5": ["11111", "10000", "10000", "11110", "00001", "00001", "11110"],
+    "6": ["01110", "10000", "10000", "11110", "10001", "10001", "01110"],
+    "7": ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
+    "8": ["01110", "10001", "10001", "01110", "10001", "10001", "01110"],
+    "9": ["01110", "10001", "10001", "01111", "00001", "00001", "01110"],
+    A: ["01110", "10001", "10001", "11111", "10001", "10001", "10001"],
+    B: ["11110", "10001", "10001", "11110", "10001", "10001", "11110"],
+    C: ["01111", "10000", "10000", "10000", "10000", "10000", "01111"],
+    D: ["11110", "10001", "10001", "10001", "10001", "10001", "11110"],
+    E: ["11111", "10000", "10000", "11110", "10000", "10000", "11111"],
+    F: ["11111", "10000", "10000", "11110", "10000", "10000", "10000"],
+  };
+  const width = 640, height = 180, scale = 12;
+  const pixels = Buffer.alloc((width * 3 + 1) * height, 255);
+  for (let y = 0; y < height; y++) pixels[y * (width * 3 + 1)] = 0;
+  [...code].forEach((character, index) => glyphs[character]!.forEach((row, y) => {
+    [...row].forEach((value, x) => {
+      if (value !== "1") return;
+      for (let dy = 0; dy < scale; dy++) for (let dx = 0; dx < scale; dx++) {
+        const offset = (48 + y * scale + dy) * (width * 3 + 1) + 1 + (38 + index * 6 * scale + x * scale + dx) * 3;
+        pixels.fill(0, offset, offset + 3);
+      }
+    });
+  }));
+  const chunk = (type: string, body: Buffer) => {
+    const payload = Buffer.concat([Buffer.from(type), body]);
+    let crc = 0xffffffff;
+    for (const byte of payload) {
+      crc ^= byte;
+      for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+    }
+    const length = Buffer.alloc(4), checksum = Buffer.alloc(4);
+    length.writeUInt32BE(body.length); checksum.writeUInt32BE((crc ^ 0xffffffff) >>> 0);
+    return Buffer.concat([length, payload, checksum]);
+  };
+  const header = Buffer.alloc(13); header.writeUInt32BE(width); header.writeUInt32BE(height, 4);
+  header[8] = 8; header[9] = 2;
+  const bytes = Buffer.concat([Buffer.from("89504e470d0a1a0a", "hex"), chunk("IHDR", header), chunk("IDAT", deflateSync(pixels)), chunk("IEND", Buffer.alloc(0))]);
+  return { code, bytes, filename: `hermes-image-${nonce}.png`, sha256: createHash("sha256").update(bytes).digest("hex") };
+}
+
+export const hermesImageInputTask: RunnerTaskFixture = {
+  id: "image-code-complete", label: "Read an uploaded image through native prompt content",
+  groups: ["native"], workMode: "standard", flow: "single_turn", expectedRunCount: 1,
+  automaticRetryPolicy: "single_attempt", attemptTimeoutMs: { local: 240_000, daytona: 360_000 },
+  expectedTerminalState: { issue: "done", run: "succeeded" },
+  buildTitle: nonce => `Read the attached Hermes image ${nonce}`,
+  buildPrompt: nonce => [
+    "Read the eight uppercase hexadecimal characters pictured in the attached image directly from the image input.",
+    "Do not read, decode or analyze the image with a tool. Do not guess the characters. Do not create files or plans. If you cannot see the image, report that limitation without claiming completion.",
+    `Form the completion summary as HERMES-IMAGE-${nonce}-<exact pictured characters>. The pictured code is not provided in this prompt.`,
+    "Call paperclip_finish with reportedWorkDisposition done, that computed summary, the current completion contract revision and satisfied objective criterion, no remaining work, and verification describing the image reading. Wait for acceptance, then emit only that exact summary as your final answer.",
+  ].join("\n"),
+  buildVisibleMarker: nonce => `HERMES-IMAGE-${nonce}-${hermesImageChallenge(nonce).code}`,
+  buildMatchers: (nonce, execution) => [
+    { kind: "message_exact", expected: `HERMES-IMAGE-${nonce}-${hermesImageChallenge(nonce).code}` },
+    { kind: "message_occurrences", expected: `HERMES-IMAGE-${nonce}-${hermesImageChallenge(nonce).code}`, count: 1 },
+    { kind: "issue_status", expected: "done" }, { kind: "run_status", expected: "succeeded" },
+    { kind: "runtime_mode", expected: "native" }, { kind: "environment", expected: execution.environment.id },
+  ],
+};
+
+/** Wrong scope/bytes or a tool-based substitute cannot qualify native image input. */
+export function gradeHermesImageInput(input: {
+  nonce: string; companyId: string; issueId: string; runId: string;
+  attachments: readonly unknown[]; downloadedBytes: Buffer; events: readonly unknown[];
+}) {
+  const expected = hermesImageChallenge(input.nonce), attachment = record(input.attachments[0]);
+  const tools = input.events.map(record).filter(row => row.eventType === "tool.execution.started")
+    .map(row => ({ row, event: record(record(row.payload).prpEvent) }));
+  const allowed = new Set(["paperclip_finish", "get_task_context", "set_task_title", "report_progress"]);
+  return [
+    { id: "one-authorized-image", passed: present(input.companyId) && present(input.issueId)
+      && input.attachments.length === 1 && present(attachment.id) && attachment.companyId === input.companyId
+      && attachment.issueId === input.issueId && attachment.originalFilename === expected.filename
+      && attachment.contentType === "image/png" && attachment.byteSize === expected.bytes.length && attachment.sha256 === expected.sha256 },
+    { id: "uploaded-image-bytes", passed: input.downloadedBytes.equals(expected.bytes)
+      && createHash("sha256").update(input.downloadedBytes).digest("hex") === expected.sha256 },
+    { id: "native-image-without-file-tool-substitution", passed: present(input.runId) && tools.length > 0
+      && tools.some(({ event }) => record(event.payload).name === "paperclip_finish")
+      && tools.every(({ row, event }) => row.runId === input.runId && event.schema === "paperclip.prp.event.v1"
+        && event.runId === input.runId && event.sourceKind === "runner" && present(event.sourceInstanceId)
+        && present(event.normalizedSessionId) && record(event.payload).namespace === "paperclip"
+        && allowed.has(String(record(event.payload).name))) },
+  ];
+}
 
 /** Preserve the pinned native form; semantic tools cannot satisfy this oracle. */
 export function hasHermesNativeQuestionBatch(value: unknown): boolean {

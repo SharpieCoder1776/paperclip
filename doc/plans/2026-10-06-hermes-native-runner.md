@@ -1578,3 +1578,39 @@ passes strict verification. The production runtime is byte-identical in the
 passing `2400ecdb8d` browser source. Repository CI at the latest head and the
 remaining subscription, account/protocol, attachment, state, control, routine,
 published-consumer and actual Daytona gates still prevent release qualification.
+
+### 2026-10-08 local file delivery and native image preparation
+
+The `af87a249c1` local `file-edit-validate` campaign passes all 11 matchers and
+cleanup in 126.310 seconds, with one attempt and zero automatic retries. Hermes
+creates and edits the workspace file, runs a real content verification command,
+registers the deliverable and completes the task. Independent workspace and
+downloaded artifact checks confirm exact bytes. Complete selected-account
+OpenRouter billing settles at $0.006084928; the public $1 company and agent
+budgets remain healthy. The final screenshot was inspected, and packaged
+evidence has no leaks or missing entries. Persisted events include incremental
+text and tools before the terminal receipt; this post-hoc timing observation
+does not qualify live browser streaming or hidden reasoning display.
+
+On the same source, cloud run `37830289657` passes nine native transport fixtures
+and 38 pinned Python checks on each Mac arm64 and Linux amd64 target. The normal
+PR CI run `37830289962` initially fails a five-second slow-CPU chat startup
+expectation and loses its canary cloud runner to a shutdown signal. Both
+original logs and the browser trace remain preserved. The single allowed
+no-source-change failed-job retry succeeds; the latest workflow attempts pass.
+Superseded duplicate automatic runs retain their cancellation records. No local
+Docker or Rust build is used.
+
+The separate explicit-only `hermes-image-input` suite prepares local and Daytona
+image acceptance on an exact vision-capable OpenRouter candidate model. Its PNG
+contains an undisclosed eight-character code only in pixels. Browser upload,
+exact authorized download bytes, native semantic completion without file/OCR
+tool substitution, selected-account billing and cleanup are independent gates.
+The code is absent from model text and filenames. The existing text-only
+DeepSeek profile and previous campaign grades remain unchanged. Credential-free
+support checks pass 2,075 tests with one platform skip, all 128 native source
+checks and Product E2E typechecking. Both exact image cells are discoverable;
+the fixture PNG was visually inspected. These checks validate preparation;
+a fresh committed-source live image run and current-head CI are required before
+claiming that coverage.
+The remaining full release matrix and actual Daytona proof still gate Hermes.

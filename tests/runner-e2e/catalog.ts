@@ -5,7 +5,7 @@ import { nativeCompletionProfile, NATIVE_COMPLETION_BUDGET_CENTS } from "./nativ
 import { chatConfirmationTasks } from "./chat-cases.js";
 import { buildConnectionSuite } from "./connection-cases.js";
 import { hiringTemplateTasks, hiringTemplateProfile, hiringTemplateDefinitionDigest } from "./hiring-template-cases.js";
-import { HERMES_API_CONNECTION_BUDGET_CENTS, HERMES_NATIVE_INTERACTION_SUITE, hermesApiConnectionChoices, hermesApiConnectionDefinitionDigest, hermesBedrockConnectionChoice, hermesNativeQuestionTask, hermesNativeQuestionStopTask } from "./hermes-api-connections.js";
+import { HERMES_API_CONNECTION_BUDGET_CENTS, HERMES_NATIVE_INTERACTION_SUITE, HERMES_IMAGE_INPUT_SUITE, HERMES_IMAGE_INPUT_MODEL, hermesImageInputTask, hermesApiConnectionChoices, hermesApiConnectionDefinitionDigest, hermesBedrockConnectionChoice, hermesNativeQuestionTask, hermesNativeQuestionStopTask } from "./hermes-api-connections.js";
 import { nativeActiveStopTasks } from "./native-active-stop-tasks.js";
 import { cursorNativeTasks } from "./cursor-native-cases.js";
 import { instructionPersistenceTask } from "./instruction-persistence.js";
@@ -1228,6 +1228,20 @@ export const runnerSuites: readonly RunnerSuiteFixture[] = [
       stopBoundary: "retained-unanswered-native-question-before-browser-click", stopProcessEvidence: "local-public-per-turn-owner-and-descendants-through-cleanup",
       remoteStopQualification: "pending-separate-remote-retirement-observer", sourceDigest: hermesApiConnectionDefinitionDigest,
     },
+  },
+  {
+    id: HERMES_IMAGE_INPUT_SUITE, label: "Hermes native image input", manualOnly: true,
+    description: "An undisclosed image-only code passes through browser upload and the native Hermes prompt, with independent content and account checks.",
+    groups: ["native"], environments: runnerEnvironments, tasks: [hermesImageInputTask], expectedMatrixSize: 2,
+    profiles: [nativeProfile({
+      id: "runner-acpx-hermes-vision", label: "Hermes vision (candidate)", provider: "acpx", acpxAgent: "hermes",
+      qualificationCandidate: "hermes", credential: "OPENROUTER_API_KEY", model: HERMES_IMAGE_INPUT_MODEL,
+      modelQualification: { source: "candidate_runner_profile", qualificationId: "hermes:v2026.9.24:openrouter:gemini-2.5-flash-lite:vision:catalog-2026-10-08:pending" },
+    })],
+    definitionMetadata: { version: 1, qualification: "pending", scheduling: "explicit-only", providerTurns: 1,
+      maximumAttemptsPerCell: 1, budgetMonthlyCents: HERMES_API_CONNECTION_BUDGET_CENTS, lifecycle: "per-turn",
+      input: "browser-upload-authorized-native-image", oracle: "undisclosed-pixel-code-exact-bytes-no-file-tools",
+      billing: "per-run-reported-cost-and-budget-health", sourceDigest: hermesApiConnectionDefinitionDigest },
   },
   {
     id: "hermes-api-connections", label: "Hermes managed API connections", manualOnly: true,

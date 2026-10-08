@@ -1651,6 +1651,34 @@ The separate Runner Evals `extended-harnesses` campaign lives in the private
 `paperclip-evals` repository and grades semantic protocol behavior against the
 mock control plane. Neither suite substitutes for the other.
 
+### Hermes native image input (explicit-only)
+
+`hermes-image-input` declares one local and one Daytona `image-code-complete`
+cell. Its separate candidate profile uses `google/gemini-2.5-flash-lite` through
+the selected managed OpenRouter account. The public model catalog reports image
+input and tools; this metadata is preparation, not inference qualification.
+The existing DeepSeek profile remains text-only.
+
+The browser uploads a generated PNG in the ordinary task-creation flow. Its
+eight-character hexadecimal code is present only in pixels, absent from the
+prompt, filename and PNG text metadata. An exact native final response must
+contain that undisclosed code once. Public attachment metadata and a downloaded
+copy must match the independent source bytes, MIME type, size, company and task.
+The durable run history must contain native semantic completion and no file,
+OCR or image-analysis tool substitute. Explicit titles prevent an unrelated
+automatic title-generation operation from preceding the image turn.
+
+The suite reuses managed account attribution, pre-credential source/runtime
+admission, bounded company/agent budgets, per-run reported billing and cleanup.
+It admits one attempt with no automatic retry. Remote selection still requires
+the verified immutable image and authorized Daytona credential. Neither target
+is qualified by the fixture's unit tests or public model discovery.
+
+```sh
+pnpm test:e2e:runner -- --list --suite hermes-image-input
+pnpm test:e2e:runner -- --id hermes-image-input.runner-acpx-hermes-vision.local.image-code-complete --max-automatic-retries 0
+```
+
 The explicit-only `confirmation-replies` suite also includes `unanswered-question-return` for native Claude and Codex (three provider turns). The browser asks a saved color question, dismisses and reopens the fresh form, sends an unrelated message, verifies the reply while the original stays pending, reloads, reopens the history entry, submits Blue, and verifies the saved answer plus a later agent acknowledgement. After dismissing the fresh form and before and after reload, the history card is the only pending-question reminder; the composer has no duplicate pending-input badge. It checks that no tasks were created. Unique, UI-ready screenshots show each checkpoint; individual checks are included in the report. This is a bounded mechanical workflow check, not broader semantic answer-quality qualification.
 ## Direct blocker guidance
 
