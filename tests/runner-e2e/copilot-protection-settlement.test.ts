@@ -164,6 +164,37 @@ describe("Copilot denial provider settlement and separate audited run Stop", () 
       await vi.advanceTimersByTimeAsync(200); expect((await result).branch).toBe("provider_cancelled_or_interrupted"); expect(afterSettlement).toHaveBeenCalledOnce();
     } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
   });
+  it("retains completion first observed after the initial receipt write before dispatching Stop", async () => {
+    vi.useFakeTimers(); let mono = 100n; vi.spyOn(process.hrtime, "bigint").mockImplementation(() => ++mono);
+    try {
+      const f = fixture(); let completionVisible = false;
+      const receipts: Array<ReturnType<typeof observeCopilotPreStop>> = [];
+      const post = stopPost(f, () => { expect(receipts).toHaveLength(2); expect(receipts[1]!.terminal?.eventType).toBe("turn.completed"); });
+      const result = settleCopilotDeniedRun({ api: { post } as any, request: f.request, deadlineAt: Date.now() + 5000,
+        load: async () => ({ ...f, events: completionVisible ? f.events : f.events.filter((_, i) => i !== 4), run: post.mock.calls.length ? f.run : liveRun(f), retired: true }),
+        afterDeniedEdit: async () => {}, retainPreStop: async receipt => { receipts.push(receipt); completionVisible = true; }, afterSettlement: async () => {} });
+      await vi.advanceTimersByTimeAsync(2000);
+      const settled = await result;
+      expect(settled.branch).toBe("provider_completed_observed_before_stop");
+      expect(settled.preStop).toEqual(receipts[1]); expect(receipts[0]!.terminal).toBeNull(); expect(post).toHaveBeenCalledOnce();
+    } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+  });
+  it.each(["earlier-stop", "retention-failed"])("refuses dispatch when refreshed terminal retention encounters %s", async kind => {
+    vi.useFakeTimers(); let mono = 100n; vi.spyOn(process.hrtime, "bigint").mockImplementation(() => ++mono);
+    try {
+      const f = fixture(); let completionVisible = false, earlierStop = false, writes = 0;
+      const post = stopPost(f);
+      const result = settleCopilotDeniedRun({ api: { post } as any, request: f.request, deadlineAt: Date.now() + 5000,
+        load: async () => ({ ...f, events: completionVisible ? f.events : f.events.filter((_, i) => i !== 4), run: earlierStop ? f.run : liveRun(f), retired: true }),
+        afterDeniedEdit: async () => {}, retainPreStop: async () => {
+          writes++; completionVisible = true;
+          if (writes === 2) { if (kind === "retention-failed") throw new Error("refreshed receipt write failed"); earlierStop = true; }
+        }, afterSettlement: async () => {} });
+      const rejected = expect(result).rejects.toThrow(kind === "earlier-stop" ? "earlier Stop" : "refreshed receipt write failed");
+      await vi.advanceTimersByTimeAsync(2000); await rejected;
+      expect(writes).toBe(2); expect(post).not.toHaveBeenCalled();
+    } finally { vi.restoreAllMocks(); vi.useRealTimers(); }
+  });
   it("rejects normal completion first returned after Stop even with an earlier transaction timestamp", async () => {
     vi.useFakeTimers(); let mono = 100n; vi.spyOn(process.hrtime, "bigint").mockImplementation(() => ++mono);
     try {

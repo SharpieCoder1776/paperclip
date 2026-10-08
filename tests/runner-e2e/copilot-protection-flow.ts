@@ -67,9 +67,20 @@ export async function settleCopilotDeniedRun(input: {
   // this causal boundary, and a later replay must never manufacture it.
   await input.retainPreStop(preStop);
   if (Date.now() >= input.deadlineAt) throw new Error("Copilot denial deadline reached before Stop");
-  const dispatchState = await input.load();
-  assertBeforeStop(dispatchState);
-  if (Date.now() >= input.deadlineAt) throw new Error("Copilot denial deadline reached before Stop");
+  let dispatchState: Awaited<ReturnType<typeof input.load>>;
+  while (true) {
+    dispatchState = await input.load();
+    assertBeforeStop(dispatchState);
+    if (Date.now() >= input.deadlineAt) throw new Error("Copilot denial deadline reached before Stop");
+    const observed = observeCopilotPreStop({ events: dispatchState.events, request: input.request, companyId: dispatchState.issue.companyId, cancellationRequestId });
+    if (JSON.stringify(observed.terminal) === JSON.stringify(preStop.terminal)) break;
+    // Completion can arrive while the previous receipt is being persisted.
+    // Retain that actual pre-dispatch observation, then recheck for an earlier
+    // Stop after the write rather than discarding the newly observed terminal.
+    preStop = observed;
+    await input.retainPreStop(preStop);
+    if (Date.now() >= input.deadlineAt) throw new Error("Copilot denial deadline reached before Stop");
+  }
   const stopDispatchMonotonicNs = process.hrtime.bigint().toString();
   const stopped = await input.api.post<Row>(`/api/heartbeat-runs/${input.request.runId}/cancel`);
   const stopAcknowledgement = readCopilotStopAcknowledgement(stopped,
