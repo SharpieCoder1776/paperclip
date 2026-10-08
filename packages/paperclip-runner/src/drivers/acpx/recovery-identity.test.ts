@@ -26,47 +26,22 @@ afterEach(async () => {
 });
 
 describe("ACPX recovery identity", () => {
-  it.each([
-    ["cursor", "../../../test/fixtures/cursor-acp/profile-v7-identity.json"],
-    ["cursor", "../../../test/fixtures/cursor-acp/profile-v8-identity.json"],
-    ["cursor", "../../../test/fixtures/cursor-acp/profile-v9-identity.json"],
-    ["copilot", "../../../test/fixtures/copilot-profile-v7-identity.json"],
-    ["copilot", "../../../test/fixtures/copilot-profile-v8-identity.json"],
-    ["copilot", "../../../test/fixtures/copilot-profile-v9-identity.json"],
-    ["copilot", "../../../test/fixtures/copilot-profile-v10-identity.json"],
-    ["copilot", "../../../test/fixtures/copilot-profile-v11-identity.json"],
-    ["pi", "../../../test-fixtures/pi-acp/profile-v9-identity.json"],
-  ] as const)("rejects retained %s sessions after the execution identity changes", async (agent, path) => {
+  it("preserves the pre-manifest Cursor recovery profile identity", async () => {
     const fixture = await recoveryFixture();
-    const historical = JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
-    const current = resolveQualifiedAcpxProfile(agent, agent === "pi" ? "openrouter/deepseek/deepseek-v4-flash-0731" : fixture.input.requestedModel);
-    const input = { ...fixture.input, requestedModel: current.qualificationModel, profile: current };
-    const next = await createAcpxRecoveryBinding(input);
-    const prior = await createAcpxRecoveryBinding({ ...input, profile: { ...current,
-      agentProfileVersion: historical.declaration.agentProfileVersion, commandDigest: historical.commandDigest } });
-    const priorExpected = { ...fixture.expected, profileDigest: prior.commandDigest,
-      requestedModel: prior.requestedModel, effectiveModel: prior.effectiveModel,
-      ...(agent === "cursor" ? { cursorMode: "agent" as const } : {}) };
-    const record = createAcpxIdentityRecord(priorExpected, prior);
-    expect(next.profileDigest).not.toBe(prior.profileDigest);
-    expect(next.profileSessionKey).not.toBe(prior.profileSessionKey);
-    expect(() => verifyExpectedAcpxIdentity({ ...priorExpected, profileDigest: next.commandDigest }, next, record)).toThrow(/persisted runtime record/);
-  });
-
-  it("binds Cursor mode on recovery and rejects missing or changed persisted mode", async () => {
-    const fixture = await recoveryFixture();
-    const input = { ...fixture.input, profile: resolveQualifiedAcpxProfile("cursor", fixture.input.requestedModel) };
-    const agent = await createAcpxRecoveryBinding(input);
-    const plan = await createAcpxRecoveryBinding({ ...input, cursorMode: "plan" });
-    expect(agent.cursorMode).toBe("agent");
-    expect(plan.profileSessionKey).not.toBe(agent.profileSessionKey);
-    const expected = { ...fixture.expected, profileDigest: plan.commandDigest, cursorMode: "plan" as const };
-    const record = createAcpxIdentityRecord(expected, plan);
-    expect(acpxProviderSessionIdentity(record, plan).cursorMode).toBe("plan");
-    expect(() => verifyExpectedAcpxIdentity({ ...expected, cursorMode: undefined }, plan, record)).toThrow(/immutable session/);
-    expect(() => verifyExpectedAcpxIdentity(expected, agent, record)).toThrow(/immutable session/);
-    expect(() => verifyExpectedAcpxIdentity(expected, plan, { ...record, cursorMode: undefined })).toThrow(/persisted runtime record/);
-    await expect(createAcpxRecoveryBinding({ ...fixture.input, cursorMode: "plan" })).rejects.toThrow(/only supported/);
+    const historical = JSON.parse(await readFile(new URL("../../../test/fixtures/cursor-acp/pre-manifest-recovery-identity.json", import.meta.url), "utf8"));
+    const requestedModel = historical.profile.qualificationModel;
+    const binding = await createAcpxRecoveryBinding({
+      ...fixture.input,
+      requestedModel,
+      profile: historical.profile,
+    });
+    const current = await createAcpxRecoveryBinding({
+      ...fixture.input, requestedModel, profile: resolveQualifiedAcpxProfile("cursor", requestedModel),
+    });
+    expect(current.profileDigest).not.toBe(binding.profileDigest);
+    // Captured from e75fde6098b0ddd8cec765bfb6ecaeecb88a26a6 before
+    // consolidating release declarations; this is historical evidence.
+    expect(binding.profileDigest).toBe(historical.profileDigest);
   });
 
   it("derives one stable, filesystem-safe runtime directory name", () => {

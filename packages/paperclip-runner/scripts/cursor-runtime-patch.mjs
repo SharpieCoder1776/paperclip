@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createCursorNativeUsage } from "./cursor-native-usage.mjs";
+import cursorNativeUsageSource from "./cursor-native-usage-source.json" with { type: "json" };
 
 // This is an owned ACP-only patch of the immutable vendor archive. The legacy
 // Cursor adapter and the vendor's interactive CLI are not changed.
@@ -73,7 +73,7 @@ return paperclipCursorInstructionSnapshot=Object.freeze({rules,ack:Object.freeze
     `if(e instanceof g.T&&e.code===${platform === "darwin-x64" ? "f" : "m"}.C.Unauthenticated)throw new (${errorType})(-32000,"Cursor provider authentication rejected",{schema:"paperclip.cursor.provider-error.v1",kind:"authentication_required"});`);
   // This diagnostic envelope never emits standard ACP usage or cost. Keep the
   // collector local to handlePrompt, including overlapping cancelled prompts.
-  replace(`const ${errorType}=`, `const paperclipCreateCursorUsage=${createCursorNativeUsage.toString()};const ${errorType}=`);
+  replace(`const ${errorType}=`, `const paperclipCreateCursorUsage=${cursorNativeUsageSource};const ${errorType}=`);
   replace("handlePrompt(e){return V(this,void 0,void 0,(function*(){var t,n,o;", "handlePrompt(e){return V(this,void 0,void 0,(function*(){var t,n,o;const paperclipUsage=paperclipCreateCursorUsage(crypto.randomUUID());let paperclipUsagePublisher,paperclipUsageTurn;try{");
   replace("n.beginTurn(),d=()=>", "n.beginTurn();paperclipUsagePublisher=this.subagentPublisher;paperclipUsageTurn=l;if(paperclipUsagePublisher&&l!==undefined){paperclipUsagePublisher.paperclipUsageCollectors??=new Map;paperclipUsagePublisher.paperclipUsageCollectors.set(l,paperclipUsage)}const d=()=>");
   replace("yield this.processPrompt(e,s,l)", "yield this.processPrompt(e,s,l,paperclipUsage)");

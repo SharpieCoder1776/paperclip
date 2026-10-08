@@ -1,7 +1,9 @@
 import { lstat, readFile, realpath } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
-export const CURSOR_PINNED_VERSION = "2026.09.26-dd393fe";
+import { QUALIFIED_ACPX_PROFILES } from "./qualified-profiles.js";
+
+export const CURSOR_PINNED_VERSION = QUALIFIED_ACPX_PROFILES.cursor.agentServerVersion;
 export const CURSOR_FIXED_ARGUMENTS = ["--disable-project-configs", "--disable-auto-update", "acp"] as const;
 export const CURSOR_CREDENTIAL_ENVIRONMENT_NAMES = ["CURSOR_API_KEY", "CURSOR_AUTH_TOKEN"] as const;
 

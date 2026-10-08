@@ -44,6 +44,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut stdout = io::stdout().lock();
     let mut next_sequence = 1_u64;
     let mut goal = Value::Null;
+    let mut session_identity = Value::Null;
     for line in stdin.lock().lines() {
         let request: Value = serde_json::from_str(&line?)?;
         let id = request
@@ -64,7 +65,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                         && request["params"]["result"] == json!({"id":"issue-1"})
                         && request["params"]["error"].is_null()}})
             } else {
-                bootstrap_success(id, command, &request, mode, profile_digest)
+                bootstrap_success(
+                    id,
+                    command,
+                    &request,
+                    mode,
+                    profile_digest,
+                    &mut session_identity,
+                )
             };
             write_json(&mut stdout, &response)?;
             if command == "turn.start" {
@@ -122,7 +130,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         if command == "permission.resolve" {
             write_json(
                 &mut stdout,
-                &bootstrap_success(id, command, &request, mode, profile_digest),
+                &bootstrap_success(
+                    id,
+                    command,
+                    &request,
+                    mode,
+                    profile_digest,
+                    &mut session_identity,
+                ),
             )?;
             continue;
         }
@@ -305,7 +320,14 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 write_json(
                     &mut stdout,
-                    &bootstrap_success(id, command, &request, mode, profile_digest),
+                    &bootstrap_success(
+                        id,
+                        command,
+                        &request,
+                        mode,
+                        profile_digest,
+                        &mut session_identity,
+                    ),
                 )?;
                 let params = request.get("params").unwrap_or(&Value::Null);
                 let turn_id = params
@@ -755,6 +777,7 @@ fn bootstrap_success(
     request: &Value,
     mode: &str,
     profile_digest: &str,
+    session_identity: &mut Value,
 ) -> Value {
     if command == "permission.resolve" {
         if mode.starts_with("permissions-") {
@@ -790,7 +813,7 @@ fn bootstrap_success(
                 .get("model")
                 .and_then(Value::as_str)
                 .unwrap_or("missing");
-            json!({
+            let result = json!({
                 "sidecarPid": std::process::id(),
                 "identity": {
                     "kind": "acpx",
@@ -803,12 +826,14 @@ fn bootstrap_success(
                     "requestedModel": model,
                     "effectiveModel": if mode == "bootstrap-wrong-model" { "wrong-model" } else { model },
                     "permissionMode": params.get("permissionMode"),
-                    "cursorMode": params.get("cursorMode"),
+                    "mode": params.get("mode"),
                     "providerLifetimeFenceCandidates": [60001, 60002, 60003],
                 },
                 "status": {},
                 "turnControls": {"steering": matches!(mode, "controls" | "controls-wrong-ack" | "controls-downgrade"), "queuedFollowUp":matches!(mode, "controls" | "controls-wrong-ack" | "controls-downgrade")},
-            })
+            });
+            *session_identity = result["identity"].clone();
+            result
         }
         "run.attach" => json!({
             "runId": if mode == "bootstrap-wrong-run" { "wrong-run" } else { params.get("runId").and_then(Value::as_str).unwrap_or("missing") },
@@ -825,22 +850,18 @@ fn bootstrap_success(
         "turn.cancel" => {
             json!({"cancelled":mode != "turns-wrong-cancel", "sessionClosed":matches!(mode, "turns-retired" | "turns-retired-terminal-first")})
         }
-        "session.suspend" => json!({
-            "suspended":mode != "suspend-wrong-ack",
-            "identity": if mode == "suspend-missing-identity" { Value::Null } else { json!({
-                "kind": "acpx",
-                "normalizedSessionId": if mode == "suspend-wrong-identity" { "another-session" } else { "session-1" },
-                "acpxRecordId": "record-1",
-                "backendSessionId": "backend-1",
-                "agentSessionId": "agent-1",
-                "profileDigest": profile_digest,
-                "workspaceDigest": format!("sha256:{}", "2".repeat(64)),
-                "requestedModel": "gpt-5.6-sol",
-                "effectiveModel": "gpt-5.6-sol",
-                "permissionMode": "approve-reads",
-                "providerLifetimeFenceCandidates": [60001, 60002, 60003],
-            })},
-        }),
+        "session.suspend" => {
+            let mut identity = session_identity.clone();
+            if mode == "suspend-missing-identity" {
+                identity = Value::Null;
+            } else if mode == "suspend-wrong-identity" {
+                identity["normalizedSessionId"] = json!("another-session");
+            }
+            json!({
+                "suspended": mode != "suspend-wrong-ack",
+                "identity": identity,
+            })
+        }
         "tool.resolve" => json!({
             "resolved":if mode == "resolutions-error-redaction" {
                 params.get("callId").and_then(Value::as_str) == Some("call-1")

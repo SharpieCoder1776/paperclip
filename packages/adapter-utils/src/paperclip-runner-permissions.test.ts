@@ -11,12 +11,11 @@ import {
 } from "./paperclip-runner-permissions.js";
 
 describe("Paperclip Runner permission defaults", () => {
-  it("admits Pi while keeping sibling ACP profiles pending", () => {
+  it("holds intermediate Pi admission and preserves upstream Cursor qualification", () => {
     expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "pi"))
-      .toMatchObject({ qualified: true, credentialEnvironment: ["OPENROUTER_API_KEY"] });
-    for (const agent of ["cursor", "copilot"]) {
-      expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === agent)?.qualified).toBe(false);
-    }
+      .toMatchObject({ qualified: false, credentialEnvironment: ["OPENROUTER_API_KEY"] });
+    expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "copilot")?.qualified).toBe(false);
+    expect(PAPERCLIP_RUNNER_ACPX_PROFILES.find(profile => profile.value === "cursor")?.qualified).toBe(true);
   });
   it("defaults Codex to the only qualified non-interactive mode", () => {
     expect(resolvePaperclipRunnerPermissionMode("codex", undefined)).toBe(

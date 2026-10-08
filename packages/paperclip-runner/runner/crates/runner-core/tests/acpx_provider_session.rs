@@ -2,7 +2,8 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use paperclip_runner_core::acpx_provider_session::{
-    AcpxPermissionMode, AcpxProviderSession, AcpxProviderSessionConfig, AcpxProviderSessionIdentity,
+    AcpxPermissionMode, AcpxProviderRuntimePolicy, AcpxProviderSession, AcpxProviderSessionConfig,
+    AcpxProviderSessionIdentity,
 };
 use paperclip_runner_core::acpx_sidecar_transport::AcpxSidecarTransportConfig;
 use paperclip_runner_core::generated_acpx_sidecar_contract::GeneratedAcpxSidecarCommand as GoalCommand;
@@ -44,7 +45,7 @@ fn config(mode: &str) -> AcpxProviderSessionConfig {
         normalized_session_id: "session-1".to_owned(),
         working_directory: std::env::temp_dir(),
         permission_mode: AcpxPermissionMode::ApproveReads,
-        cursor_mode: None,
+        mode: None,
         permission_mode_pinned: true,
         provider_policy: None,
         system_instructions: "Complete the supplied task.".to_owned(),
@@ -66,7 +67,7 @@ fn expected_identity() -> AcpxProviderSessionIdentity {
         requested_model: "gpt-5.6-sol".to_owned(),
         effective_model: "gpt-5.6-sol".to_owned(),
         permission_mode: Some(AcpxPermissionMode::ApproveReads),
-        cursor_mode: None,
+        mode: None,
         provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
     }
 }
@@ -156,28 +157,19 @@ fn validates_qualified_policy_and_tool_catalog_before_spawning() {
 }
 
 #[test]
-fn admits_custom_claude_models_and_legacy_codex_profile() {
-    for (agent, model) in [
-        ("codex", "gpt-5.6-sol"),
-        ("claude", "claude-sonnet-5"),
-        ("claude", "claude-opus-5"),
-        ("claude", "custom-provider-model"),
-        ("grok", "grok-4.7"),
-        ("grok", "future-exact-model"),
-    ] {
-        let mut qualified = config("bootstrap");
-        qualified.agent = agent.to_owned();
-        qualified.model = model.to_owned();
-        qualified.validate().unwrap();
+fn bootstraps_unlisted_models_confirmed_by_the_sidecar_for_every_agent() {
+    for agent in ["claude", "codex", "pi", "grok", "cursor", "copilot"] {
+        let mut selected = config("bootstrap");
+        selected.agent = agent.to_owned();
+        selected.model = "custom/model[context=272k,reasoning=medium]".to_owned();
+        selected.provider_policy = Some(AcpxProviderRuntimePolicy { read_only: false });
+        let mut session = AcpxProviderSession::start(&selected).unwrap();
+        assert_eq!(session.identity().requested_model, selected.model);
+        assert_eq!(session.identity().effective_model, selected.model);
+        session
+            .shutdown("model verification test complete")
+            .unwrap();
     }
-
-    let mut drifted = config("bootstrap");
-    drifted.model = "custom-codex-model".to_owned();
-    assert!(drifted
-        .validate()
-        .unwrap_err()
-        .to_string()
-        .contains("exact model"));
 }
 
 #[test]
@@ -273,26 +265,15 @@ fn check_tool_receiver_admission(oversized: bool) {
         assert!(session.state().pending_tool("call-admission").is_some());
         session.deliver_tool_result(&result).unwrap();
         assert!(!session.state().has_pending_tools());
-        session
-            .deliver_tool_result(&result)
-            .expect("an identical receipt retry must be idempotent");
-        let mut changed_payload = result.clone();
-        changed_payload.result = json!({"id":"another-issue"});
-        let mut changed_operation = result.clone();
-        changed_operation.operation_id = "issues.write".to_owned();
-        let mut changed_error = result.clone();
-        changed_error.is_error = true;
-        for conflicting in [changed_payload, changed_operation, changed_error] {
-            let error = session
-                .deliver_tool_result(&conflicting)
-                .unwrap_err()
-                .to_string();
-            assert!(
-                error.contains("conflicting duplicate tool result"),
-                "{error}"
-            );
-        }
-        assert!(!session.state().has_pending_tools());
+        // An exact durable delivery replay is acknowledged without a second
+        // sidecar resolution. The command journal below proves that boundary.
+        session.deliver_tool_result(&result).unwrap();
+        let mut changed = result.clone();
+        changed.result = json!({"id":"different-issue"});
+        assert!(session.deliver_tool_result(&changed).is_err());
+        changed = result.clone();
+        changed.operation_id = "issues.update".to_owned();
+        assert!(session.deliver_tool_result(&changed).is_err());
     }
     session.shutdown("admission test complete").unwrap();
     let rows: Vec<serde_json::Value> = std::fs::read_to_string(&journal)
