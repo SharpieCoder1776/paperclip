@@ -1,10 +1,9 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
-import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(fileURLToPath(new URL("..", import.meta.url)));
@@ -185,54 +184,6 @@ export function stageBundledProviderOptionalDependencies(destinationDir, publish
   return result;
 }
 
-export function dockerBundledProviderTarget(architecture) {
-  if (!["amd64", "arm64"].includes(architecture)) throw new Error("Docker provider materialization requires a declared supported target architecture");
-  // Only Linux x64 has an existing native Codex executable qualification.
-  // The runtime resolver retains that digest authority; ARM64 stays legacy.
-  return architecture === "amd64" ? "linux-x64" : null;
-}
-
-export function mergeBundledProviderGraph(stagedDirectory, serverDirectory) {
-  for (const directory of [stagedDirectory, serverDirectory]) {
-    if (!isAbsolute(directory) || resolve(directory) !== directory || directory === "/" || realpathSync(directory) !== directory) {
-      throw new Error("Docker provider graph requires canonical owned package directories");
-    }
-  }
-  const input = resolve(stagedDirectory, "node_modules"), output = resolve(serverDirectory, "node_modules");
-  if (!existsSync(output)) mkdirSync(output);
-  if (realpathSync(input) !== input || realpathSync(output) !== output) throw new Error("Docker provider node_modules cannot escape its package");
-  const names = ["@agentclientprotocol/codex-acp"];
-  const serverMetadata = JSON.parse(readFileSync(resolve(serverDirectory, "package.json"), "utf8"));
-  for (const name of names) {
-    const source = resolve(input, name), stat = lstatSync(source);
-    const metadata = JSON.parse(readFileSync(resolve(source, "package.json"), "utf8"));
-    if (!stat.isDirectory() || stat.isSymbolicLink() || realpathSync(source) !== source
-      || metadata.name !== name || metadata.version !== serverMetadata.dependencies?.[name]) {
-      throw new Error("Docker provider bridge identity mismatch");
-    }
-  }
-  // Keep the provider closure nested and physically inside the server's own
-  // authority. Changing unrelated direct server bindings (for example zod)
-  // would change application behavior even when no native agent is running.
-  const owned = resolve(output, ".paperclip-native-providers");
-  if (lstatExists(owned)) throw new Error("Docker provider graph destination already exists");
-  cpSync(stagedDirectory, owned, { recursive: true, dereference: false, verbatimSymlinks: true });
-  chmodSync(owned, 0o755);
-  for (const name of names) {
-    const destination = resolve(output, name), namespace = dirname(destination);
-    if (!existsSync(namespace)) mkdirSync(namespace);
-    if (realpathSync(namespace) !== namespace) throw new Error("Docker provider namespace cannot resolve outside the server");
-    if (lstatExists(destination)) {
-      const stat = lstatSync(destination);
-      // pnpm's store is untouched; remove only its server-local package link.
-      if (!stat.isSymbolicLink()) throw new Error("Docker provider entry binding must be a workspace package link");
-      rmSync(destination);
-    }
-    symlinkSync(relative(namespace, resolve(owned, "node_modules", name)), destination, "dir");
-    if (!inside(output, realpathSync(destination))) throw new Error("Docker provider bridge escaped its server authority");
-  }
-}
-
 function lstatExists(path) {
   try { lstatSync(path); return true; }
   catch (error) { if (error.code === "ENOENT") return false; throw error; }
@@ -313,54 +264,6 @@ export function stageBundledEsbuildOptionalDependencies(destinationDir, publishM
   for (const directory of remove) rmSync(directory, { recursive: true, force: true });
   if (Object.keys(optional).length) result.optionalDependencies = { ...result.optionalDependencies, ...optional };
   return result;
-}
-
-export function materializeDockerProviderGraph(serverDirectory, architecture, { sourceRoot = repoRoot } = {}) {
-  const target = dockerBundledProviderTarget(architecture);
-  if (!target) return { target: `linux-${architecture === "arm64" ? "arm64" : "x64"}`, materialized: false, reason: "Native providers are not qualified for this target; legacy installation preserved" };
-  const metadata = JSON.parse(readFileSync(resolve(serverDirectory, "package.json"), "utf8"));
-  const names = ["@agentclientprotocol/codex-acp"];
-  const temporary = realpathSync(mkdtempSync(resolve(tmpdir(), "paperclip-docker-provider-graph-")));
-  try {
-    const source = resolve(temporary, "source"), staged = resolve(temporary, "staged"); mkdirSync(source);
-    writeFileSync(resolve(source, "package.json"), JSON.stringify({ name: metadata.name, version: metadata.version, type: "module", files: [],
-      dependencies: Object.fromEntries(names.map(name => [name, metadata.dependencies?.[name]])), bundleDependencies: names }));
-    prepareBundledPackage(source, staged, { sourceRoot });
-    const profile = JSON.parse(readFileSync(resolve(sourceRoot, "packages/paperclip-runner/acpx-profiles.json"), "utf8")).profiles.codex;
-    const packageName = `${profile.agentRuntimePackage}-${target}`, packageVersion = `${profile.agentRuntimeVersion}-${target}`;
-    // Docker alone preinstalls its host binary. Keep npm's normal platform check
-    // and isolate this install so it cannot rewrite the pinned JavaScript graph.
-    const native = resolve(temporary, "host-runtime"); mkdirSync(native);
-    writeFileSync(resolve(native, "package.json"), JSON.stringify({ private: true, name: "paperclip-docker-codex-runtime", version: "1.0.0",
-      dependencies: { [packageName]: `npm:${profile.agentRuntimePackage}@${packageVersion}` } }));
-    execFileSync("npm", ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"], { cwd: native, stdio: "inherit", timeout: 180_000 });
-    const installed = resolve(native, "node_modules", packageName), installedManifest = resolve(installed, "package.json");
-    const directoryStat = lstatSync(installed), manifestStat = lstatSync(installedManifest);
-    if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink() || realpathSync(installed) !== installed
-      || !manifestStat.isFile() || manifestStat.isSymbolicLink() || manifestStat.nlink !== 1 || manifestStat.size > 256 * 1024) throw new Error("Docker Codex host package is not an owned npm dependency");
-    const installedMetadata = JSON.parse(readFileSync(installedManifest, "utf8"));
-    if (![packageName, profile.agentRuntimePackage].includes(installedMetadata.name) || installedMetadata.version !== packageVersion
-      || !installedMetadata.os?.includes("linux") || !installedMetadata.cpu?.includes("x64")) throw new Error("Docker Codex host package identity mismatch");
-    cpSync(installed, resolve(staged, "node_modules", packageName), { recursive: true, dereference: false });
-    // This private image graph is never published as an npm bundle. Its host
-    // payload is already installed, so retain the wrapper's original authority.
-    const stagedMetadata = JSON.parse(readFileSync(resolve(staged, "package.json"), "utf8"));
-    const runtimeManifest = realpathSync(createRequire(resolve(staged, "node_modules", profile.agentServerPackage, "package.json"))
-      .resolve(`${profile.agentRuntimePackage}/package.json`));
-    if (!inside(resolve(staged, "node_modules"), runtimeManifest)) throw new Error("Docker Codex runtime escapes its staged graph");
-    const runtimeMetadata = JSON.parse(readFileSync(runtimeManifest, "utf8"));
-    if (runtimeMetadata.name !== profile.agentRuntimePackage || runtimeMetadata.version !== profile.agentRuntimeVersion
-      || runtimeMetadata.optionalDependencies !== undefined) throw new Error("Docker Codex normalized runtime identity mismatch");
-    const declarations = Object.fromEntries(["linux-x64", "linux-arm64", "darwin-x64", "darwin-arm64", "win32-x64", "win32-arm64"]
-      .map(target => [`${profile.agentRuntimePackage}-${target}`, `npm:${profile.agentRuntimePackage}@${profile.agentRuntimeVersion}-${target}`]));
-    if (Object.entries(declarations).some(([name, specifier]) => stagedMetadata.optionalDependencies?.[name] !== specifier)) {
-      throw new Error("Docker Codex root platform declarations must match its qualified profile");
-    }
-    runtimeMetadata.optionalDependencies = declarations;
-    writeFileSync(runtimeManifest, `${JSON.stringify(runtimeMetadata, null, 2)}\n`);
-    mergeBundledProviderGraph(staged, serverDirectory);
-    return { target, materialized: true, packageName, packageVersion, installedBy: "npm", providerCalls: 0, lifecycleScriptsRun: false };
-  } finally { rmSync(temporary, { recursive: true, force: true }); }
 }
 
 function patchedDependencyPackageName(specifier) {
@@ -536,12 +439,6 @@ export function prepareBundledPackage(sourceDir, destinationDir, { sourceRoot = 
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
-  if (process.argv[2] === "--docker-provider-graph") {
-    const [, serverDirectory, architecture, ...extra] = process.argv.slice(2);
-    if (!serverDirectory || !architecture || extra.length) throw new Error("Usage: prepare-bundled-package.mjs --docker-provider-graph <server-directory> <TARGETARCH>");
-    console.log(JSON.stringify(materializeDockerProviderGraph(resolve(serverDirectory), architecture)));
-    process.exit(0);
-  }
   const [sourceDir, destinationDir] = process.argv.slice(2);
   if (!sourceDir || !destinationDir) {
     console.error("Usage: prepare-bundled-package.mjs <source-dir> <destination-dir>");

@@ -26,12 +26,6 @@ GitHub Actions owns `pnpm-lock.yaml`.
 - Pull request CI validates dependency resolution when manifests change.
 - Pushes to `master` regenerate `pnpm-lock.yaml` with `pnpm install --lockfile-only --no-frozen-lockfile`, commit it back if needed, and then run verification with `--frozen-lockfile`.
 
-`paperclipai install --ref` resolves dependencies inside its disposable downloaded
-checkout before the frozen install. It builds the UI and stages runtime skills
-from that checkout, then packs the prepared files with source packaging hooks
-disabled. Consumer installation hooks remain enabled. A preparation failure
-leaves the current installed version active.
-
 ## Trusted PR Workflow
 
 The PR caller uses `paperclipai/paperclip/.github/workflows/pr-trusted.yml@master`.

@@ -64,8 +64,8 @@ selected execution host's `PATH`. An explicit execution command takes precedence
 and resumed sessions retain their recorded command. Older or newer CLI versions
 are allowed; compatibility is established by the actual protocol or login attempt.
 Missing executables and real protocol failures still return actionable errors.
-Package identity, executable containment, and isolated credential homes remain
-checked. Linux ARM64 retains its existing legacy login path because native
+Package identity and executable containment remain checked. Browser login keeps
+its existing provider-specific credential home. Linux ARM64 retains its existing legacy login path because native
 execution is not qualified there.
 
 Exact dependency pins remain release and ACPX artifact-qualification checks.
@@ -78,20 +78,11 @@ exact-version platform packages as optional dependencies. npm installs the
 package for the consumer's operating system and architecture. Those declarations
 belong to the published server manifest; the bundled JavaScript wrapper delegates
 platform installation there so npm can keep native and legacy versions separate.
-The wrapper code and patched ACP bridge stay unchanged. Docker images
-preinstall their qualified runtime dependencies during the image build.
+The wrapper code and patched ACP bridge stay unchanged.
 Codex sandbox read roots include the separately installed native vendor resources
 without granting access to enclosing npm directories or credential homes.
-Release assembly checks the source revision and Paperclip runner binary
-identities before publication. This packaging does not change agent defaults or
+This packaging does not change agent defaults or
 the selected runner of an existing agent.
-
-The npm Linux daemon is built for `x86_64-unknown-linux-musl` with static linking.
-Release validation rejects an ELF interpreter or required shared libraries, then
-the native producer executes the bounded build-metadata check. The Docker image
-keeps its GNU daemon. Its provider-pack identity remains tied to that exact source
-and image; it does not supply the npm host daemon. The existing release verifier
-offers a provider-free portable Linux check without image builds or publication.
 
 Every ACPX harness accepts an explicit caller-selected model without a Paperclip
 model allowlist. The adapter sends that ID unchanged and verifies the provider's

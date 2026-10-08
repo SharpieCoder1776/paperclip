@@ -78,11 +78,12 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
       const env = { ...process.env,
         ANTHROPIC_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", CLAUDE_CODE_OAUTH_TOKEN: "",
         OPENAI_API_KEY: "", CODEX_API_KEY: "",
-        HOME: home, CLAUDE_CONFIG_DIR: home, CODEX_HOME: home,
+        CLAUDE_CONFIG_DIR: provider === "anthropic" ? home : process.env.CLAUDE_CONFIG_DIR,
+        CODEX_HOME: provider === "openai" ? home : process.env.CODEX_HOME,
         BROWSER: "true",
       };
       return new Promise((resolve, reject) => {
-        child = spawn("python3", ["-u", "-c", PYTHON_PTY_BRIDGE, executable, ...args], { env, cwd: home, stdio: ["pipe", "pipe", "pipe"] });
+        child = spawn("python3", ["-u", "-c", PYTHON_PTY_BRIDGE, executable, ...args], { env, stdio: ["pipe", "pipe", "pipe"] });
         child.stdout.on("data", (bytes: Buffer) => onData(bytes.toString("utf8")));
         // Provider output may contain secrets. Never log or retain stderr.
         child.stderr.resume();

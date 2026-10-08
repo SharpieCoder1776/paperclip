@@ -22,102 +22,70 @@ The user approved splitting that work into four useful steps:
 ## Current slice
 
 Canonical branch: `codex/runner-packaging-prerequisites`.
-Base: `71cd0a2621615182274a977d6cc969b9ab920b92`.
+Frozen master base: `1881894973a2b25838d8abed9bd8aeebc3af4441`.
 Canonical PR: [#15555](https://github.com/paperclipai/paperclip/pull/15555).
 Its [checks](https://github.com/paperclipai/paperclip/pull/15555/checks) and
 [commits](https://github.com/paperclipai/paperclip/pull/15555/commits) record the
-tested candidate. Hosted results and final review disposition are recorded in
-the PR description; local receipts alone do not close those gates.
+final candidate. Hosted results and review disposition belong to that exact
+candidate; earlier green checks do not qualify a later revision.
 
-This slice fixes the installed dependency graph, Codex executable resolution,
-isolated browser login, Git install staging, and the release asset transfer needed
-for Linux and macOS packages. It reuses the existing install sandbox, release
-verification workflow, tests, and runner binary assembler.
+The user requested a smaller PR on 2026-10-08. This slice now covers Codex
+executable resolution, native-free npm packaging, the installed JavaScript
+dependency graph, and the sandbox resource lookup required by that npm layout.
+It retains focused tests and extends the existing public npm consumer verifier.
+It does not add a workflow, change Docker or Git installation, change shared
+login HOME or working-directory behavior, or transfer runner release assets.
+Agent defaults, saved runner choices, UI, schema, and provider qualification stay
+unchanged.
 
-It does not change agent defaults, the harness picker, provider qualification,
-database schema, experimental feature policy, or existing agent configuration.
-The large execution and setup changes stay in the later slices.
+The broader prerequisite implementation is preserved on the pushed branch
+`codex/runner-packaging-full-snapshot` at
+`6f3060beaa842ffcee21af058370d3cab5f571e9`. Its Git staging, extra login isolation,
+release pipeline, Docker materialization, and unrelated test-fixture changes
+remain outside this PR. Release and platform packaging must be qualified in a
+separate slice before enabling new-agent defaults.
 
-### Codex distribution correction, 2026-10-08
+### Retained behavior
 
-The user requested removal of pre-bundled Codex binaries from this PR.
-Retain the pinned Codex JavaScript graph and let npm install the exact official
-platform dependency for the consumer's host. Strip producer-host binaries from
-the prepared package as well as the added cross-platform payloads. Docker images
-still preinstall their own qualified runtime dependencies. Paperclip's own
-runner release assets remain in scope.
+Ordinary native Codex startup, direct evals, and browser login prefer the
+installed dependency. They accept usable older or newer CLI versions. If the
+dependency is absent, use the selected host's PATH. Explicit commands and recorded
+sessions retain precedence. Real protocol/login failures remain actionable;
+there is no silent runner fallback. Release pins and the separate ACPX artifact
+qualification stay unchanged. Linux ARM64 keeps its existing legacy login path.
 
-Actual npm install testing exposed a collision with the unchanged legacy Codex
-adapter. Move platform dependency declarations from the bundled wrapper metadata
-to the published server manifest, preserving the wrapper code and patched bridge.
-The existing installer checks must prove both native and legacy version selection,
-and artifact qualification must still verify the selected executable's version and digest.
-Direct/source runtimes retain their own dependency declarations. A CI credential
-test fixture also reserves its ports before making its unchanged denial assertion.
-Installed-consumer verification also checks the native vendor sandbox read roots
-and their rendered isolation configuration; a version probe alone does not prove
-that Codex can invoke its native resources for shell tools.
+Paperclip npm tarballs retain the patched JavaScript graph and strip Codex native
+payloads. The published server declares official optional host packages. npm
+installs them for the consumer's OS and architecture. This avoids collisions with
+the legacy adapter's separate Codex version. The server owns the bridge dependency
+used by its vendored runner. Sandbox reads remain confined to the selected native
+vendor resources; package identities and path containment still apply.
 
-Reopen packaging and installed-consumer verification for this correction.
-The green checks at `36d9eb0c3c6b9ca5234432b97349dc7317cfa916` are historical;
-they do not verify the changed dependency distribution. Reuse the existing
-packaging tests and public npm consumer sandbox to prove an empty Codex binary
-payload in Paperclip tarballs, host-only npm resolution, pinned execution, and
-unchanged integrity checks. Record the final revision and hosted results in the
-canonical PR description before handoff.
-
-### Codex CLI compatibility, 2026-10-08
-
-The user requested tolerance for usable older Codex installations. Ordinary native
-Codex startup, direct evals, and browser login now prefer the installed dependency
-without requiring its version to equal the release pin. When the dependency is
-absent, resolve an executable from the selected host's PATH. Explicit commands and
-recorded sessions retain precedence; remote runs never borrow a controller CLI.
-Actual protocol/login failures remain setup/run errors. Release pins and the
-separate ACPX artifact-integrity qualification remain unchanged.
-
-The normalized npm resource lookup accepts version differences while retaining
-package identities, actual resolver bindings, host compatibility, canonical paths,
-and narrow vendor read grants. Existing tests cover older/newer metadata, PATH
-fallback, installed preference, credential isolation, unsafe manifests and paths,
-and session continuity. Reopen current-head CI and fresh review for this refinement;
-record its tested revision and exact evidence in the PR before handoff.
+Browser login keeps master's provider-specific credential directories, ambient
+HOME, and working directory. Only executable selection and safe errors change.
 
 ## Evidence and gates
 
 | Gate | Status | Evidence |
 | --- | --- | --- |
-| Preserve original implementation | Passed | Original branch and commit above |
-| Extract only first-slice behavior | Passed | 31 files; separate branch; independent packaging/release review |
-| Installer and packaging tests | Passed | Existing installer suite: 26 tests; existing packaging suite: 24 tests |
-| Login and transport controls | Passed | Login: 13/13; focused Codex/transport selection: 21 passed, 185 outside the focused filter |
-| Release-transfer controls | Passed | Release workflow, transfer, and sandbox suites: 38/38; actionlint and Node/shell syntax checks passed |
-| Token gates | Passed | All three commands in `check:token-gates` passed |
-| Package and module contracts | Passed | Release package manifest and feature module boundary checks passed |
-| Clean installed Codex version probe | Passed on initial candidate; final-head rerun required | Existing Linux npm consumer sandbox resolved and launched Codex 0.160.0, preserved consumer hooks, and made no provider calls |
-| Initial hosted checks | 46 passed; one fixture timeout repaired | Candidate `6e5e20379449cfdfbd6ca5f6043492f91e698b62`; real issue-route bootstrap moved to a bounded suite hook, original agent denials unchanged, board control added; 3/3 local cases passed |
-| Release review fixes | Local checks passed; hosted producer pending | Explicit status guards preserve release assembly with skipped lanes; static musl npm Linux daemon; 32/32 focused checks and original-source portability rejection control |
-| Portable Linux producer | Hosted qualification | One bounded Linux-only dispatch of the existing release verifier; no local Rust/Docker build, providers, image build, or publication |
-| Full checks and fresh review | Hosted qualification | Require green checks and fresh 5/5 review on the linked PR's final head |
-| All-harness live onboarding and cloud qualification | Deferred | Owned by later slices; prior evidence does not prove this revision |
+| Preserve original and broader work | Passed | Pushed branches and revisions above |
+| Narrow scope against current master | Passed | 22 files; no workflow, Docker, Git installer, or unrelated fixture diff |
+| Focused packaging and installed-consumer controls | Passed | 24 packaging tests with actual offline npm tarballs; 9 existing consumer assertion tests |
+| Login controls after narrowing | Passed | 13 existing tests; HOME/config-directory/spawn semantics match frozen master |
+| Codex selection, protocol, sandbox, and ACPX integrity | Passed locally | 21 selection/security/transport/eval tests; 4 npm layout integrity controls; runner TypeScript no-emit |
+| Full checks and fresh review | Pending | Require green current-head CI and fresh 5/5 review with no unresolved comments |
+| Previous broad candidate | Historical | 47 ordinary CI jobs passed at `6f3060b`; not proof for the narrowed candidate |
+| Existing old CLI protocol proof | Historical | Official Codex 0.156.1 completed startup handshake; scope must be matched to retained sources |
+| All-harness live onboarding and cloud qualification | Deferred | Later defaults slices; authentication probes and CI cannot close live journeys |
 
-Heavy builds run in hosted CI. No local Docker or Rust build is planned.
+Use Node 24 and one worker for focused local checks. Keep heavy builds in hosted
+CI. Do not build Docker images or Rust locally. Do not author a lockfile change.
 No provider-backed runs or new disposable environments are needed for this
-slice. The original $250 cost ceiling and cleanup obligations still apply.
-Existing login credentials and running user previews must remain untouched.
+prerequisite slice. Incremental provider spend for narrowing is $0. The original
+$250 ceiling and cleanup obligations remain for later live qualification.
+Existing credentials and user previews remain untouched.
 
-The initial clean-install CI job checked out the candidate-equivalent merge tree
-at `296097827eeb4005950134ec7f10ce4022706ef8`, then the normal release workflow
-generated a lock-only producer commit at `3e1df4472b56f04ecb029008e47cd276afdb5c6d`.
-The installed verifier reports that producer stamp. This is distinct from the
-product source candidate; no lockfile is committed to this PR.
-
-Focused test commands use Node 24 and a single worker: `node --test
---test-concurrency=1 scripts/acpx-patch-packaging.test.mjs` and, from `cli/`,
-`node ../node_modules/vitest/vitest.mjs run src/__tests__/install-command.test.ts
---maxWorkers=1 --no-file-parallelism`. These tests include real offline npm pack
-and installation controls; they do not claim a published release or provider task.
-
-Next action: resolve the first PR's review and check failures on the final
-candidate, then hand it off for human review. Start the Codex-default slice after
-the user chooses to proceed. Merging and deployment remain outside this task.
+Next action: commit and push the narrowed candidate, rerun its checks and fresh
+review, then update the PR and existing evidence report. Start the Codex-default
+slice after the user chooses to proceed. Merging and deployment remain outside
+this task.

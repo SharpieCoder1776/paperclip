@@ -23,9 +23,7 @@ import { bundledCliNpmDependencies } from "./cli-bundled-npm-dependencies.mjs";
 import {
   createBundledInstallManifest,
   configureBundledProviderOverrides,
-  dockerBundledProviderTarget,
   materializePublishManifest,
-  mergeBundledProviderGraph,
   selectBundledDependencyPatches,
   stageBundledEsbuildOptionalDependencies,
   stageBundledProviderOptionalDependencies,
@@ -321,35 +319,6 @@ test("bundled esbuild cannot follow a platform payload or package namespace outs
   assert.throws(() => stageBundledEsbuildOptionalDependencies(directory, publish), /escapes its producer graph/);
 });
 
-test("Docker provider graphs use qualified targets and contain only native entry bindings without changing server dependencies", (t) => {
-  assert.equal(dockerBundledProviderTarget("amd64"), "linux-x64");
-  assert.equal(dockerBundledProviderTarget("arm64"), null, "Unqualified native ARM64 must not break legacy images");
-  assert.throws(() => dockerBundledProviderTarget("x64"), /declared supported target/);
-  const fixture = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-docker-provider-graph-")));
-  t.after(() => rmSync(fixture, { recursive: true, force: true }));
-  const server = join(fixture, "server"), staged = join(fixture, "staged"), store = join(fixture, "workspace-store");
-  for (const directory of [server, staged, store]) mkdirSync(directory);
-  mkdirSync(join(server, "node_modules/@agentclientprotocol"), { recursive: true });
-  writeFileSync(join(server, "package.json"), JSON.stringify(serverPackage));
-  for (const name of ["@agentclientprotocol/codex-acp", "zod"]) {
-    const directory = join(staged, "node_modules", name); mkdirSync(directory, { recursive: true });
-    writeFileSync(join(directory, "package.json"), JSON.stringify({ name, version: serverPackage.dependencies[name] ?? "4.4.3" }));
-    const previous = join(store, name); mkdirSync(previous, { recursive: true });
-    writeFileSync(join(previous, "package.json"), JSON.stringify({ name, version: "previous-version" }));
-    symlinkSync(previous, join(server, "node_modules", name));
-  }
-  writeFileSync(join(staged, "package.json"), JSON.stringify({ name: serverPackage.name }));
-  const before = readFileSync(join(server, "node_modules/zod/package.json"), "utf8");
-  mergeBundledProviderGraph(staged, server);
-  assert.equal(readFileSync(join(server, "node_modules/zod/package.json"), "utf8"), before, "Application dependencies retain the existing workspace binding");
-  for (const name of ["@agentclientprotocol/codex-acp"]) {
-    assert.equal(lstatSync(join(server, "node_modules", name)).isSymbolicLink(), true);
-    assert.equal(realpathSync(join(server, "node_modules", name)), join(server, "node_modules/.paperclip-native-providers/node_modules", name));
-    assert.equal(JSON.parse(readFileSync(join(store, name, "package.json"))).version, "previous-version", "Workspace store must remain untouched");
-  }
-  assert.throws(() => mergeBundledProviderGraph(staged, server), /destination already exists/);
-});
-
 test("Paperclip Runner pins the qualified ACPX host callbacks", () => {
   assert.equal(rootPackage.pnpm.patchedDependencies["acpx@0.13.1"], "patches/acpx@0.13.1.patch");
   assert.equal(
@@ -532,7 +501,7 @@ test("server package staging applies every bundled runtime patch and preserves t
   const nativePackage = join(fixtureArtifacts, "@openai/codex-linux-x64");
   mkdirSync(join(nativePackage, "vendor"), { recursive: true });
   writeFileSync(join(nativePackage, "package.json"), JSON.stringify({ name: "@openai/codex", version: "0.160.0-linux-x64", os: ["linux"], cpu: ["x64"] }));
-  writeFileSync(join(nativePackage, "vendor/codex"), "npm-installed Docker host fixture; never executed");
+  writeFileSync(join(nativePackage, "vendor/codex"), "producer host fixture; never executed");
   mkdirSync(join(fixtureSourceRoot, "packages/paperclip-runner/src/drivers/acpx"), { recursive: true });
   writeFileSync(join(fixtureSourceRoot, "package.json"), JSON.stringify(rootPackage));
   writeFileSync(join(fixtureSourceRoot, "packages/paperclip-runner/acpx-profiles.json"), JSON.stringify(profileData));
@@ -561,8 +530,7 @@ mkdir -p "$destination/node_modules/.pnpm"
 set -euo pipefail
 printf 'npm %s\\n' "$*" >> "$FAKE_CALL_LOG"
 [ "$*" = "install --omit=dev --ignore-scripts --no-audit --no-fund" ]
-node -e 'const fs = require("node:fs"); const path=require("node:path"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); if(pkg.name === "paperclip-docker-codex-runtime"){for(const name of Object.keys(pkg.dependencies)){fs.cpSync(path.join(process.env.FAKE_NATIVE_ARTIFACTS,name),path.join("node_modules",name),{recursive:true});}process.exit(0);} for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = name === "@openai/codex"; const optionalDependencies = native ? Object.fromEntries(["linux-x64","linux-arm64","darwin-x64","darwin-arm64","win32-x64","win32-arm64"].map(target => [name+"-"+target,"npm:"+name+"@"+version+"-"+target])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } }'
-if [ -f package.json ] && node -e 'process.exit(require("./package.json").name === "paperclip-docker-codex-runtime" ? 0 : 1)'; then exit 0; fi
+node -e 'const fs = require("node:fs"); const pkg = require("./package.json"); if ("devDependencies" in pkg) process.exit(1); for (const [name, version] of Object.entries(pkg.dependencies)) { const dir = "node_modules/" + name; fs.mkdirSync(dir + "/dist", { recursive: true }); fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version })); } for (const [bridge, runtimes] of Object.entries(pkg.overrides ?? {})) { for (const [name, version] of Object.entries(runtimes)) { const dir = "node_modules/" + name; fs.mkdirSync(dir, { recursive: true }); const native = name === "@openai/codex"; const optionalDependencies = native ? Object.fromEntries(["linux-x64","linux-arm64","darwin-x64","darwin-arm64","win32-x64","win32-arm64"].map(target => [name+"-"+target,"npm:"+name+"@"+version+"-"+target])) : undefined; fs.writeFileSync(dir + "/package.json", JSON.stringify({ name, version, optionalDependencies })); } }'
 node -e 'const fs=require("node:fs");fs.cpSync(process.env.FAKE_NATIVE_ARTIFACTS+"/@openai/codex-linux-x64","node_modules/@openai/codex-linux-x64",{recursive:true});fs.mkdirSync("node_modules/@openai/codex/vendor",{recursive:true});fs.writeFileSync("node_modules/@openai/codex/vendor/codex","producer fallback fixture");'
 mkdir -p node_modules/acpx/dist
 node -e 'const fs=require("node:fs");fs.mkdirSync("node_modules/esbuild",{recursive:true});fs.writeFileSync("node_modules/esbuild/package.json",JSON.stringify({name:"esbuild",version:"0.28.2",scripts:{postinstall:"node install.js"},optionalDependencies:Object.fromEntries(["linux-x64","darwin-arm64","darwin-x64"].map(target=>["@esbuild/"+target,"0.28.2"]))}));fs.mkdirSync("node_modules/@esbuild/linux-x64",{recursive:true});fs.writeFileSync("node_modules/@esbuild/linux-x64/package.json",JSON.stringify({name:"@esbuild/linux-x64",version:"0.28.2",os:["linux"],cpu:["x64"]}));'
@@ -660,30 +628,6 @@ printf 'patched spawnEnvironment runtime\\n' > "$target/dist/runtime.js"
       `${readFileSync(new URL(`../${patchPath}`, import.meta.url), "utf8").trimEnd()}\n`,
       `${specifier} receives its own full configured patch`,
     );
-  }
-
-  const imageServer = join(fixtureDir, "image-server");
-  mkdirSync(join(imageServer, "node_modules"), { recursive: true });
-  writeFileSync(join(imageServer, "package.json"), JSON.stringify(serverPackage));
-  writeFileSync(join(imageServer, "node_modules/unrelated-marker"), "keep existing application graph");
-  const imageReceipt = JSON.parse(execFileSync(process.execPath, ["--input-type=module", "-e",
-    `import { materializeDockerProviderGraph } from ${JSON.stringify(new URL("./prepare-bundled-package.mjs", import.meta.url).href)};
-      console.log(JSON.stringify(materializeDockerProviderGraph(process.argv[1], 'amd64', { sourceRoot: process.argv[2] })));`,
-    imageServer, fixtureSourceRoot], { env: { ...process.env, PATH: `${binDir}:${process.env.PATH}`,
-      FAKE_CALL_LOG: callLog, FAKE_NATIVE_ARTIFACTS: fixtureArtifacts }, encoding: "utf8" }).trim().split("\n").at(-1));
-  assert.equal(imageReceipt.materialized, true);
-  assert.equal(imageReceipt.installedBy, "npm");
-  const imageRuntime = join(imageServer, "node_modules/.paperclip-native-providers/node_modules/@openai/codex/package.json");
-  assert.deepEqual(JSON.parse(readFileSync(imageRuntime, "utf8")).optionalDependencies, codexOptional,
-    "The private Docker graph restores only the validated original Codex declarations after host installation");
-  assert.equal(imageReceipt.packageName, "@openai/codex-linux-x64");
-  assert.equal(imageReceipt.packageVersion, "0.160.0-linux-x64");
-  const imageGraph = join(imageServer, "node_modules/.paperclip-native-providers/node_modules");
-  assert.equal(existsSync(join(imageGraph, "@openai/codex-linux-x64/vendor/codex")), true);
-  for (const target of codexTargets.filter(target => target !== "linux-x64")) assert.equal(existsSync(join(imageGraph, `@openai/codex-${target}`)), false);
-  assert.equal(readFileSync(join(imageServer, "node_modules/unrelated-marker"), "utf8"), "keep existing application graph");
-  for (const name of ["@agentclientprotocol/codex-acp"]) {
-    assert.match(realpathSync(join(imageServer, "node_modules", name)), /image-server\/node_modules\/\.paperclip-native-providers\/node_modules/);
   }
 });
 

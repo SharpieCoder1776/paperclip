@@ -1,6 +1,6 @@
 import express from "express";
 import request from "supertest";
-import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mockIssueService = vi.hoisted(() => ({
   addComment: vi.fn(),
@@ -44,7 +44,6 @@ const mockHeartbeatService = vi.hoisted(() => ({
 
 const mockInstanceSettingsService = vi.hoisted(() => ({
   get: vi.fn(),
-  getExperimental: vi.fn(),
   listCompanyIds: vi.fn(),
 }));
 
@@ -152,10 +151,11 @@ function registerRouteMocks() {
   }));
 }
 
-let errorHandler: typeof import("../middleware/index.js").errorHandler;
-let issueRoutes: typeof import("../routes/issues.js").issueRoutes;
-
-function createApp(actor: Record<string, unknown>) {
+async function createApp(actor: Record<string, unknown>) {
+  const [{ errorHandler }, { issueRoutes }] = await Promise.all([
+    vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
+    vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
+  ]);
   const app = express();
   app.use(express.json());
   app.use((req, _res, next) => {
@@ -190,9 +190,7 @@ function makeIssue(overrides: Record<string, unknown> = {}) {
 }
 
 describe("issue workspace command authorization", () => {
-  // Transform the real route graph within the existing bounded setup hook.
-  // Every case still creates a fresh app/actor and resets its service mocks.
-  beforeAll(async () => {
+  beforeEach(() => {
     vi.resetModules();
     vi.doUnmock("../services/access.js");
     vi.doUnmock("../services/activity-log.js");
@@ -208,13 +206,6 @@ describe("issue workspace command authorization", () => {
     vi.doUnmock("../routes/authz.js");
     vi.doUnmock("../middleware/index.js");
     registerRouteMocks();
-    [{ errorHandler }, { issueRoutes }] = await Promise.all([
-      vi.importActual<typeof import("../middleware/index.js")>("../middleware/index.js"),
-      vi.importActual<typeof import("../routes/issues.js")>("../routes/issues.js"),
-    ]);
-  });
-
-  beforeEach(() => {
     vi.clearAllMocks();
     mockIssueService.addComment.mockResolvedValue(null);
     mockIssueService.create.mockResolvedValue(makeIssue());
@@ -258,7 +249,6 @@ describe("issue workspace command authorization", () => {
         feedbackDataSharingPreference: "prompt",
       },
     });
-    mockInstanceSettingsService.getExperimental.mockResolvedValue({ enableExternalObjects: false });
     mockInstanceSettingsService.listCompanyIds.mockResolvedValue(["company-1"]);
     mockLogActivity.mockResolvedValue(undefined);
     mockRoutineService.syncRunStatusForIssue.mockResolvedValue(undefined);
@@ -270,35 +260,6 @@ describe("issue workspace command authorization", () => {
           onFulfilled,
           onRejected,
         ),
-    }));
-  });
-
-  it("allows board callers to create workspace commands with fresh actor and service state", async () => {
-    const app = createApp({
-      type: "board",
-      userId: "board-user",
-      companyIds: ["company-1"],
-      source: "local_implicit",
-    });
-
-    const res = await request(app)
-      .post("/api/companies/company-1/issues")
-      .send({
-        title: "Board workspace",
-        executionWorkspaceSettings: {
-          workspaceStrategy: {
-            type: "git_worktree",
-            runtimeProvisionCommand: "touch /tmp/paperclip-rce",
-          },
-        },
-      });
-
-    expect(res.status).toBe(201);
-    expect(mockIssueService.create).toHaveBeenCalledOnce();
-    expect(mockIssueService.create).toHaveBeenCalledWith("company-1", expect.objectContaining({
-      executionWorkspaceSettings: expect.objectContaining({
-        workspaceStrategy: expect.objectContaining({ runtimeProvisionCommand: "touch /tmp/paperclip-rce" }),
-      }),
     }));
   });
 
