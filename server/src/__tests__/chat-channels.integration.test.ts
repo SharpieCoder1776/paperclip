@@ -5277,6 +5277,62 @@ describeEmbeddedPostgres("chat channel control-plane integration", () => {
     await service.shutdown();
   });
 
+  it.each([false, true])("requires Slack at-mentions for every message when enabled (DM=%s)", async (isDM) => {
+    const fixture = await seedCompany();
+    const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture);
+    expect((await service.get(endpoint.id)).requireAtMention).toBe(false);
+    const thread = makeThread({ channelId: isDM ? "D-MENTION" : "C-MENTION", id: `slack:${isDM ? "D-MENTION" : "C-MENTION"}:7100.1`, isDM });
+    const send = (id: string, mentioned: boolean, trigger: ChatSdkMessageTrigger = isDM ? "direct_message" : "subscribed_message") =>
+      deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
+        message: makeMessage({ id, text: mentioned ? "@maya continue" : "Continue", mentioned }), trigger });
+    // The default preserves unmentioned DMs and subscribed thread replies.
+    await send("7100.1", true, isDM ? "direct_message" : "mention");
+    await send("7100.2", false);
+    expect(wakeup).toHaveBeenCalledTimes(2);
+    expect((await service.update(endpoint.id, { requireAtMention: true })).requireAtMention).toBe(true);
+    await send("7100.3", false);
+    expect(wakeup).toHaveBeenCalledTimes(2);
+    const [filtered] = await db.select().from(chatDeliveries).where(and(
+      eq(chatDeliveries.endpointId, endpoint.id), eq(chatDeliveries.state, "filtered")));
+    expect(filtered.redactedError).toBe("Message did not @mention the bot");
+    expect(filtered.normalizedEvent).toMatchObject({ filtering: { contentRetained: false } });
+    expect(filtered.normalizedEvent).not.toHaveProperty("message.text");
+    // Both Slack callback kinds can carry an explicit mention. Retries cannot
+    // produce a second wakeup for the same provider message.
+    await send("7100.4", true);
+    await send("7100.4", true, "mention");
+    expect(wakeup).toHaveBeenCalledTimes(3);
+    const conversations = await db.select().from(chatConversations).where(eq(chatConversations.endpointId, endpoint.id));
+    expect(conversations).toHaveLength(1);
+    const comments = await db.select().from(issueComments).where(eq(issueComments.issueId, conversations[0].issueId));
+    expect(comments).toHaveLength(3);
+    await service.update(endpoint.id, { requireAtMention: false });
+    await send("7100.5", false);
+    expect(wakeup).toHaveBeenCalledTimes(4);
+    if (isDM) {
+      await service.update(endpoint.id, { requireAtMention: true, allowDirectMessages: false });
+      await send("7100.6", true);
+      expect(wakeup).toHaveBeenCalledTimes(4);
+    }
+  });
+
+  it("filters a queued Slack message when Require at-mention is enabled before drain", async () => {
+    const fixture = await seedCompany();
+    const { callbacks, endpoint, service, wakeup } = await configuredSlackEndpoint(fixture, {
+      deferWebhookProcessing: true, scheduleDeferredWork: () => undefined,
+    });
+    const thread = makeThread({ channelId: "D-QUEUED-MENTION", id: "slack:D-QUEUED-MENTION:7300.1", isDM: true });
+    await deliverMessage({ callbacks, endpointId: endpoint.id, thread: thread.thread,
+      message: makeMessage({ id: "7300.1", text: "Start work" }), trigger: "direct_message" });
+    await service.update(endpoint.id, { requireAtMention: true });
+    const [delivery] = await db.select().from(chatDeliveries).where(eq(chatDeliveries.endpointId, endpoint.id));
+    await db.update(chatDeliveries).set({ nextAttemptAt: new Date(0) }).where(eq(chatDeliveries.id, delivery.id));
+    await service.processPendingDeliveries(25, delivery.id);
+    expect(wakeup).not.toHaveBeenCalled();
+    expect(await db.select().from(chatConversations).where(eq(chatConversations.endpointId, endpoint.id))).toHaveLength(0);
+    expect((await db.select().from(chatDeliveries).where(eq(chatDeliveries.id, delivery.id)))[0].state).toBe("filtered");
+  });
+
   it("captures initial Slack communication guidance once per task, ignoring forged message configuration", async () => {
     const fixture = await seedCompany();
     const { callbacks, endpoint, service } = await configuredSlackEndpoint(fixture);

@@ -5844,6 +5844,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       communicationInstructions: endpoint.communicationInstructions,
       ...(endpoint.provider === "imessage-photon" && endpoint.botExternalId ? { photonAllocation: endpoint.botExternalId.startsWith("photon-project:") ? "shared" as const : "dedicated" as const } : {}),
       allowDirectMessages: endpoint.allowDirectMessages,
+      requireAtMention: endpoint.requireAtMention,
       allowGroupChats: endpoint.allowGroupChats,
       allowUnlinkedPeople: endpoint.allowUnlinkedPeople,
       replyMode: "subscribed",
@@ -6109,6 +6110,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         }
         if (input.allowDirectMessages !== undefined)
           values.allowDirectMessages = input.allowDirectMessages;
+        if (input.requireAtMention !== undefined) {
+          if (existing.endpoint.provider !== "slack")
+            throw unprocessable("Require at-mention only applies to Slack connections");
+          values.requireAtMention = input.requireAtMention;
+        }
         if (input.allowGroupChats && existing.endpoint.provider === "imessage-photon" && (!existing.endpoint.botExternalId || existing.endpoint.botExternalId.startsWith("photon-project:")))
           throw unprocessable("Photon shared channels support direct messages only; groups require a dedicated channel");
         if (input.allowGroupChats !== undefined)
@@ -11548,6 +11554,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
       ]))
     )
       throw deny();
+    // Recheck the current policy when a queued message is about to wake work.
+    if (
+      endpoint.provider === "slack" &&
+      endpoint.requireAtMention &&
+      delivery.normalizedEvent.trigger !== "mention" &&
+      (delivery.normalizedEvent.message as { mentionedBot?: boolean } | undefined)?.mentionedBot !== true
+    )
+      throw deny();
     const conversation = await tx
       .select()
       .from(chatConversations)
@@ -14623,6 +14637,7 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           status: chatEndpoints.status,
           setup: chatEndpoints.setup,
           allowDirectMessages: chatEndpoints.allowDirectMessages,
+          requireAtMention: chatEndpoints.requireAtMention,
           allowGroupChats: chatEndpoints.allowGroupChats,
         })
         .from(chatEndpoints)
@@ -14786,8 +14801,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
           resource.availability === "available" &&
           currentEndpoint.allowGroupChats;
       }
-      const accepting = endpointAccepting && destinationAccepting;
+      const mentionRequired =
+        endpoint.provider === "slack" &&
+        currentEndpoint.requireAtMention &&
+        trigger !== "mention" &&
+        message.isMention !== true;
+      const accepting = endpointAccepting && destinationAccepting && !mentionRequired;
       const redactDestinationDelivery =
+        mentionRequired ||
         (!accepting && thread.isDM) ||
         (!thread.isDM &&
           (endpoint.provider === "microsoft-teams" ||
@@ -14799,9 +14820,11 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         ? staleActivation
           ? "Connection activation changed before admission"
           : "Connection is not active"
-        : endpoint.provider === "telegram" && !thread.isDM && !addressed
-          ? "Message did not address the agent"
-          : "Destination is not enabled in Paperclip";
+        : mentionRequired
+          ? "Message did not @mention the bot"
+          : endpoint.provider === "telegram" && !thread.isDM && !addressed
+            ? "Message did not address the agent"
+            : "Destination is not enabled in Paperclip";
       let candidate = admittedDeliveryId
         ? await tx
             .select()
@@ -16185,8 +16208,14 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
         const destinationStillAllowed = thread.isDM
           ? currentEndpoint.allowDirectMessages
           : nonDirectDestinationAllowed(currentEndpoint, currentResource);
+        const mentionStillAllowed =
+          currentEndpoint.provider !== "slack" ||
+          !currentEndpoint.requireAtMention ||
+          trigger === "mention" ||
+          message.isMention === true;
         if (
           !endpointStillAllowed ||
+          !mentionStillAllowed ||
           !destinationStillAllowed ||
           !currentPrincipalAuthorization.allowed
         ) {
@@ -16199,15 +16228,17 @@ export function chatChannelService(db: Db, options: ChatChannelServiceOptions) {
               principalId: null,
               nextAttemptAt: null,
               processedAt: filteredAt,
-              redactedError: endpointStillAllowed
-                ? destinationStillAllowed
-                  ? currentPrincipalAuthorization.linkedDenied
-                    ? "Linked Paperclip account is not currently permitted"
-                    : currentEndpoint.allowUnlinkedPeople
-                      ? "Endpoint sponsor can no longer authorize external guests"
-                      : "External identity must be linked to a Paperclip account"
-                  : "Destination is not enabled in Paperclip"
-                : "Connection is not active",
+              redactedError: !mentionStillAllowed
+                ? "Message did not @mention the bot"
+                : endpointStillAllowed
+                  ? destinationStillAllowed
+                    ? currentPrincipalAuthorization.linkedDenied
+                      ? "Linked Paperclip account is not currently permitted"
+                      : currentEndpoint.allowUnlinkedPeople
+                        ? "Endpoint sponsor can no longer authorize external guests"
+                        : "External identity must be linked to a Paperclip account"
+                    : "Destination is not enabled in Paperclip"
+                  : "Connection is not active",
               updatedAt: filteredAt,
             })
             .where(

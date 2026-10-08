@@ -197,3 +197,13 @@ apps without that scope require reinstalling with the updated manifest. Other
 people's bot DMs remain inaccessible. Scheduling uses ordinary Paperclip routines,
 not a Slack-specific timer. Routine results are sent explicitly through the tool;
 ordinary task finals are not automatically broadcast to Slack.
+
+## Require an at-mention for inbound messages
+
+Slack app settings include **Require at-mention** directly below **Allow direct
+messages**. It defaults to off, preserving existing thread and DM behavior.
+When enabled, each inbound message must explicitly @mention the connected bot,
+including replies in existing channel threads and direct messages. DMs must also
+be enabled with **Allow direct messages**. Unmentioned messages do not create
+or continue a task. Queued messages are checked again before starting agent work.
+This setting does not cancel work that has already started.
