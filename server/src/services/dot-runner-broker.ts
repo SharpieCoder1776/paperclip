@@ -455,8 +455,14 @@ function createBroker(db: Db) {
           if (ports.has(runId)) throw fail("A Dot run controller is already attached.");
           const [coordinator] = await db.select().from(nativeRunFinalizations).where(eq(nativeRunFinalizations.runId, runId));
           if (!coordinator?.leaseExpiresAt || coordinator.leaseExpiresAt <= new Date()) throw fail("Run controller ownership is unavailable.");
+          // Reserve synchronously after the ownership read; another attachment
+          // may have completed while that read was in flight.
+          if (ports.has(runId)) throw fail("A Dot run controller is already attached.");
           ports.set(runId, { token, send, revoke, controllerGeneration: coordinator.controllerGeneration });
-          await db.update(assignments).set({ controllerGeneration: coordinator.controllerGeneration }).where(and(eq(assignments.runId, runId), eq(assignments.bindingGeneration, execution.provider.binding.bindingGeneration)));
+          try {
+            await db.update(assignments).set({ controllerGeneration: coordinator.controllerGeneration }).where(and(eq(assignments.runId, runId),
+              eq(assignments.bindingGeneration, execution.provider.binding.bindingGeneration), sql`${assignments.controllerGeneration} <= ${coordinator.controllerGeneration}`));
+          } catch (error) { if (ports.get(runId)?.token === token) ports.delete(runId); throw error; }
           // Any HTTP replica can reserve an operation. Only this run's current
           // controller drains it. No Runner/sandbox is needed for an idle binding.
           let timer: NodeJS.Timeout | undefined;

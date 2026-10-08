@@ -79,7 +79,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
   }, [pairing]);
   const binding = state.data?.binding;
   const connection: DotConnectionState = {
-    phase: binding?.status === "ready" && binding.subscriptionVerified ? "ready"
+    phase: binding?.status === "ready" && binding.subscriptionVerified && !["paused", "terminated", "pending_approval"].includes(state.data?.agentStatus ?? "") ? "ready"
       : binding?.hasPendingChallenge ? "testing" : binding?.subscriptionVerified ? "subscribed" : binding?.connected ? "connected" : "waiting",
     problem: state.error ? "offline"
       : binding?.status === "pairing" && (!pairing || pairing.bindingId !== binding.id) ? binding.pairingExpiresAt && Date.parse(binding.pairingExpiresAt) <= Date.now() ? "expired" : "prompt_unavailable"
@@ -92,6 +92,7 @@ export function ExternalAgentInviteDialog({ companyId, onClose, onBack }: {
   const error = (generate.variables === preset ? generate.error : null) ?? (preset === "dot" ? pair.error ?? test.error : null);
   const busy = generate.isPending || pair.isPending || test.isPending || (preset === "dot" && !!invitation && state.isPending);
   const retry = () => {
+    if (unavailable) { void state.refetch(); return; }
     if (state.error) { void state.refetch(); return; }
     if (generate.error || !invitation) { if (preset) generate.mutate(preset); return; }
     if (pair.error) { pair.mutate(binding?.status === "pairing" ? binding.id : undefined); return; }

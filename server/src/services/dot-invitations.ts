@@ -1,5 +1,5 @@
 import { and, desc, eq, isNull, ne, sql } from "drizzle-orm";
-import { agents, companies, dotAgentBindings, type Db } from "@paperclipai/db";
+import { activityLog, agents, companies, dotAgentBindings, type Db } from "@paperclipai/db";
 import { agentService } from "./agents.js";
 import { approvalService } from "./approvals.js";
 import { accessService } from "./access.js";
@@ -16,7 +16,10 @@ export function dotInvitationService(db: Db) {
       .from(agents).leftJoin(dotAgentBindings, and(eq(dotAgentBindings.agentId, agents.id), isNull(dotAgentBindings.revokedAt)))
       .where(and(eq(agents.companyId, companyId), ne(agents.status, "terminated"),
         eq(agents.adapterType, "paperclip_runner"), sql`${agents.adapterConfig}->>'provider' = 'openai_dot'`,
-        sql`${agents.metadata}->'dotInvitation'->>'operatorId' = ${operatorId}`)).orderBy(desc(agents.createdAt));
+        sql`exists (select 1 from ${activityLog} where ${activityLog.companyId} = ${agents.companyId}
+          and ${activityLog.entityId} = ${agents.id}::text and ${activityLog.entityType} = 'agent'
+          and ${activityLog.actorType} = 'user' and ${activityLog.actorId} = ${operatorId}
+          and ${activityLog.action} = 'agent.hire_created' and ${activityLog.details}->>'source' = 'dot-invitation')`)).orderBy(desc(agents.createdAt));
     return rows.find(row => row.binding?.status !== "ready")?.agent ?? null;
   }
   async function describe(agent: typeof agents.$inferSelect) {
