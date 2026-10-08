@@ -191,9 +191,9 @@ describe("durable inbound chat scheduler receipts", () => {
     };
   }
 
-  it.each(["unmentioned", "mentioned", "coalesced"])("checks Slack mentions after a real heartbeat queue wait (%s)", async (scenario) => {
-    const mentioned = scenario !== "unmentioned";
-    const allowed = scenario === "mentioned";
+  it.each(["unmentioned", "mentioned", "coalesced", "recovery"])("checks Slack mentions after a real heartbeat queue wait (%s)", async (scenario) => {
+    const mentioned = scenario === "mentioned" || scenario === "coalesced";
+    const allowed = scenario === "mentioned" || scenario === "recovery";
     const f = await fixture();
     await db.update(agents).set({ adapterType: "durable_chat_retry_test" }).where(eq(agents.id, f.agentId));
     const applicationId = randomUUID(), connectionId = randomUUID(), endpointId = randomUUID();
@@ -214,6 +214,14 @@ describe("durable inbound chat scheduler receipts", () => {
     await f.wake(request);
     const [receipt] = await db.select().from(agentWakeupRequests).where(eq(agentWakeupRequests.id, request.id));
     expect(receipt.status).toBe("queued");
+    const [queuedRun] = await db.select().from(heartbeatRuns).where(eq(heartbeatRuns.id, receipt.runId!));
+    expect(queuedRun.startedAt).toBeNull();
+    const originalStartedAt = new Date(Date.now() - 60_000);
+    if (scenario === "recovery") {
+      // Same-run retries retain their first claim time, even when queued again.
+      await db.update(heartbeatRuns).set({ startedAt: originalStartedAt })
+        .where(eq(heartbeatRuns.id, receipt.runId!));
+    }
     if (scenario === "coalesced") {
       const second = f.request();
       await db.insert(issueComments).values({ id: second.commentId, companyId: f.companyId, issueId: f.issueId,
@@ -237,6 +245,7 @@ describe("durable inbound chat scheduler receipts", () => {
     expect(run.status).toBe(allowed ? "succeeded" : "cancelled");
     expect(execute).toHaveBeenCalledTimes(allowed ? 1 : 0);
     if (!allowed) expect(run.errorCode).toBe("chat_mention_required");
+    if (scenario === "recovery") expect(run.startedAt).toEqual(originalStartedAt);
   });
 
   async function executionHold(f: { companyId: string; issueId: string; agentId: string }) {

@@ -10640,6 +10640,28 @@ export function heartbeatService(
     companyAgents?: AgentOrgRow[],
   ) {
     if (run.status !== "queued") return run;
+    // Claim is the first execution boundary. startedAt survives same-run
+    // retries; restart recovery may also enter executeRun already running.
+    // Neither may reinterpret an admitted, already-started message as new work.
+    if (!run.startedAt && !(await slackMentionAllowsRunStart(db, run))) {
+      const now = new Date();
+      const reason = "Message did not @mention the bot";
+      // This runs under the agent start lock. Do not use cancelRunInternal,
+      // which recursively starts the next run and reacquires that lock.
+      const cancelled = await setRunStatus(run.id, "cancelled", {
+        finishedAt: now,
+        error: reason,
+        errorCode: "chat_mention_required",
+      });
+      if (cancelled) {
+        await setWakeupStatus(run.wakeupRequestId, "skipped", { finishedAt: now, error: reason });
+        await appendRunEvent(cancelled, {
+          eventType: "lifecycle", stream: "system", level: "warn", message: reason,
+        });
+        await releaseIssueExecutionAndPromote(cancelled, { suppressImmediateRecovery: true });
+      }
+      return null;
+    }
     const agent = await getAgent(run.agentId);
     if (!agent) {
       await cancelRunInternal(
@@ -13585,16 +13607,6 @@ export function heartbeatService(
         return;
       }
       run = claimed;
-    }
-
-    // Admission can precede execution by a full queue wait. Use durable wake
-    // receipts (including coalesced input), not the old admission-time policy.
-    if (!(await slackMentionAllowsRunStart(db, run))) {
-      await cancelRunInternal(run.id, "Message did not @mention the bot", {
-        errorCode: "chat_mention_required",
-        suppressImmediateRecovery: true,
-      });
-      return;
     }
 
     const instructionCleanupRun = run;
