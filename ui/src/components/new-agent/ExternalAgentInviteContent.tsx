@@ -9,7 +9,7 @@ import { cn } from "@/lib/utils";
 export type ExternalAgentPreset = "dot" | "hermes" | "other";
 export type DotConnectionState = {
   phase: "waiting" | "connected" | "subscribed" | "testing" | "ready";
-  problem?: "event_timeout" | "expired" | "prompt_unavailable" | "offline";
+  problem?: "event_timeout" | "prompt_unavailable" | "offline";
 };
 
 const presets = [
@@ -45,8 +45,7 @@ const checks = [
 export function DotConnectionChecks({ state }: { state: DotConnectionState }) {
   const completed = { waiting: 0, connected: 1, subscribed: 2, testing: 2, ready: 3 }[state.phase];
   const message = state.problem === "offline" ? "Connection updates paused. Reconnect to check the latest status."
-    : state.problem === "prompt_unavailable" ? "Your invitation is saved, but setup prompts aren’t stored. Create a fresh prompt to continue."
-    : state.problem === "expired" ? "This setup prompt expired. Create a new one and send it to your Dot."
+    : state.problem === "prompt_unavailable" ? "This setup prompt was replaced in another window. Create a fresh prompt to continue."
     : state.problem === "event_timeout" ? "Your Dot connected, but hasn’t confirmed the test event. Ask it to check Paperclip, then retry."
     : state.phase === "ready" ? "Your Dot is ready for tasks. Messages can travel both ways."
     : state.phase === "waiting" ? "Watching for your Dot. Updates will appear here automatically."
@@ -72,7 +71,7 @@ export function DotConnectionChecks({ state }: { state: DotConnectionState }) {
         </li>;
       })}
     </ol>
-    <p role={state.problem ? "alert" : "status"} aria-live="polite" className={cn("text-sm leading-relaxed", state.problem ? "text-destructive" : "text-muted-foreground")}>{message}</p>
+    <p role={state.problem && state.problem !== "prompt_unavailable" ? "alert" : "status"} aria-live="polite" className={cn("text-sm leading-relaxed", state.problem && state.problem !== "prompt_unavailable" ? "text-destructive" : "text-muted-foreground")}>{message}</p>
   </section>;
 }
 
@@ -132,7 +131,7 @@ export function ExternalAgentInviteContent({
       </Button>
       {provider && (approvalHref ? <Button asChild><Link to={approvalHref} onClick={onClose}>Review approval</Link></Button>
         : ready ? <Button onClick={onClose}>Done</Button>
-        : dot && ["expired", "prompt_unavailable"].includes(connection.problem ?? "") ? <Button disabled={busy} onClick={onNewPrompt}>Create a new prompt</Button>
+        : dot && connection.problem === "prompt_unavailable" ? <Button disabled={busy} onClick={onNewPrompt}>Create a new prompt</Button>
         : !prompt || busy ? <Button disabled>{busy ? "Preparing…" : "Waiting for Dot…"}</Button>
         : <AgentSetupPrompt
           key={preset}

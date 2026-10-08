@@ -42,6 +42,7 @@ async function click(label: string) {
 }
 beforeEach(async () => {
   vi.clearAllMocks();
+  Object.values(dotApi).forEach(mock => mock.mockReset());
   invites.createCompanyInvite.mockResolvedValue({ token: "one-time-token", onboardingTextPath: "/api/invites/one-time-token/onboarding.txt" });
   invites.getInviteOnboarding.mockResolvedValue({ onboarding: { connectivity: {} } });
   invites.copy.mockResolvedValue(undefined);
@@ -267,4 +268,94 @@ it("keeps cloud Dot gated until managed execution is qualified", async () => {
   expect([...document.querySelectorAll("button")].find(b => b.textContent?.startsWith("Dot"))?.disabled).toBe(true);
   expect(document.body.textContent).toContain("Dot cloud execution is not available yet");
   expect(dotApi.create).not.toHaveBeenCalled();
+});
+
+async function openDotSetup() {
+  await act(async () => cache.setQueryData(queryKeys.instance.experimentalSettings, { enableOpenAiDot: true, enablePublicMcp: true }));
+  await click("Invite an external agent");
+  await act(async () => [...document.querySelectorAll("button")].find(b => b.textContent?.startsWith("Dot"))!.click());
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 50)); });
+}
+
+const pendingDotBinding = (id: string, expiresAt: string) => ({
+  id, status: "pairing", connected: false, subscriptionVerified: false, hasPendingChallenge: false, pairingExpiresAt: expiresAt,
+});
+
+it.each(["expired", "unavailable"])("automatically replaces an %s saved Dot prompt on opening", async condition => {
+  const connection = { enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle",
+    binding: pendingDotBinding("saved-binding", new Date(Date.now() + (condition === "expired" ? -60000 : 900000)).toISOString()) };
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: connection.binding });
+  dotApi.connection.mockImplementation(async () => ({ ...connection }));
+  dotApi.pair.mockImplementation(async () => {
+    const expiresAt = new Date(Date.now() + 900000).toISOString();
+    connection.binding = pendingDotBinding("fresh-binding", expiresAt);
+    return { bindingId: "fresh-binding", pairingCode: "fresh-test-code", expiresAt };
+  });
+  await openDotSetup();
+  expect(dotApi.pair).toHaveBeenCalledExactlyOnceWith("company-1", "dot-agent", "saved-binding");
+  expect(document.body.textContent).not.toContain("expired");
+  expect(document.body.textContent).not.toContain("Create a new prompt");
+  await click("Copy setup prompt");
+  expect(invites.copy.mock.calls[0][0]).toContain("fresh-test-code");
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+});
+
+it("renews a Dot prompt that expires while setup stays open", async () => {
+  const connection = { enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle", binding: null as any };
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: null });
+  dotApi.connection.mockImplementation(async () => ({ ...connection }));
+  let generation = 0;
+  dotApi.pair.mockImplementation(async () => {
+    generation++;
+    const expiresAt = new Date(Date.now() + (generation === 1 ? 350 : 900000)).toISOString();
+    connection.binding = pendingDotBinding(`binding-${generation}`, expiresAt);
+    return { bindingId: connection.binding.id, pairingCode: `code-${generation}`, expiresAt };
+  });
+  await openDotSetup();
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 400)); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  expect(dotApi.pair).toHaveBeenCalledTimes(2);
+  expect(dotApi.pair).toHaveBeenLastCalledWith("company-1", "dot-agent", "binding-1");
+  expect(document.body.textContent).not.toContain("expired");
+  await click("Copy setup prompt");
+  expect(invites.copy.mock.calls[0][0]).toContain("code-2");
+});
+
+it("checks fresh connection state before renewing a cached pending Dot invitation", async () => {
+  const staleBinding = pendingDotBinding("saved-binding", new Date(Date.now() - 60000).toISOString());
+  cache.setQueryData(["dot-binding", "company-1", "dot-agent"], {
+    enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle", binding: staleBinding,
+  });
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: staleBinding });
+  dotApi.connection.mockResolvedValue({ enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle",
+    binding: { ...staleBinding, status: "ready", connected: true, subscriptionVerified: true } });
+  await openDotSetup();
+  expect(dotApi.connection).toHaveBeenCalled();
+  expect(dotApi.pair).not.toHaveBeenCalled();
+  expect(document.body.textContent).toContain("Your Dot is connected");
+});
+
+it("offers a retry after automatic renewal fails without rotating on every poll", async () => {
+  const connection = { enabled: true, resourceUrl: "https://paperclip.example/mcp/runner", agentStatus: "idle",
+    binding: pendingDotBinding("saved-binding", new Date(Date.now() - 60000).toISOString()) };
+  dotApi.create.mockResolvedValue({ agent: { id: "dot-agent", status: "idle" }, approvalId: null, binding: connection.binding });
+  dotApi.connection.mockImplementation(async () => ({ ...connection }));
+  dotApi.pair.mockRejectedValueOnce(new Error("Connection interrupted. Try again."));
+  await openDotSetup();
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+  expect(document.body.textContent).toContain("Connection interrupted. Try again.");
+  await act(async () => cache.invalidateQueries({ queryKey: ["dot-binding", "company-1", "dot-agent"] }));
+  expect(dotApi.pair).toHaveBeenCalledTimes(1);
+  dotApi.pair.mockImplementation(async () => {
+    const expiresAt = new Date(Date.now() + 900000).toISOString();
+    connection.binding = pendingDotBinding("retried-binding", expiresAt);
+    return { bindingId: "retried-binding", pairingCode: "retried-code", expiresAt };
+  });
+  await click("Try again");
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 30)); });
+  expect(dotApi.pair).toHaveBeenCalledTimes(2);
+  await click("Copy setup prompt");
+  expect(invites.copy.mock.calls[0][0]).toContain("retried-code");
 });

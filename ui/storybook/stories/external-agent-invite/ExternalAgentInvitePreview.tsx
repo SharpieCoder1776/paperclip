@@ -19,12 +19,13 @@ export interface ExternalAgentInvitePreviewProps {
   failTest?: boolean;
   stepDelayMs?: number;
   shell?: boolean;
+  preparing?: boolean;
 }
 
 /** Storybook owns simulation. No timer, fixture code, or fake status ships in the UI component. */
 export function ExternalAgentInvitePreview({
   initialScreen = "entry", initialPreset = "dot", initialConnection = { phase: "waiting" },
-  companyName = "Paperclip", simulate = true, failTest = false, stepDelayMs = 2000, shell = true,
+  companyName = "Paperclip", simulate = true, failTest = false, stepDelayMs = 2000, shell = true, preparing = false,
 }: ExternalAgentInvitePreviewProps) {
   const [screen, setScreen] = useState<"entry" | "picker" | "setup" | "closed">(initialScreen);
   const [preset, setPreset] = useState<ExternalAgentPreset>(initialPreset);
@@ -52,7 +53,8 @@ export function ExternalAgentInvitePreview({
         <ExternalAgentInviteContent
           preset={screen === "picker" ? null : preset}
           companyName={companyName}
-          prompt={preset === "dot" ? dotInvitePrompt(generation) : externalInvitePrompt}
+          busy={preparing}
+          prompt={preparing ? "" : preset === "dot" ? dotInvitePrompt(generation) : externalInvitePrompt}
           connection={connection}
           onSelect={value => { setPreset(value); setScreen("setup"); }}
           onBack={() => setScreen("picker")}

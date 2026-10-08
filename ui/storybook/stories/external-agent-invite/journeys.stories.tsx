@@ -8,7 +8,7 @@ const meta = {
   parameters: {
     layout: "fullscreen",
     initialEntries: ["/PAP/agents"],
-    docs: { description: { component: "Proposed invite flow using shared UI in the production app shell. Start at Invite an external agent, choose Dot, then copy the prompt. Storybook simulates each connection check after copying; no plugin, invitation, subscription, or cloud job is created. Hermes and Other use the existing external-agent prompt verbatim. The live self-hosted Dot setup still uses its manual event test. Refresh the story to replay." } },
+    docs: { description: { component: "Live invite flow using shared UI in the production app shell. Start at Invite an external agent, choose Dot, then copy the prompt. Storybook simulates each connection check after copying; no plugin, invitation, subscription, or cloud job is created. Hermes and Other use the existing external-agent prompt verbatim. The live self-hosted setup renews expired prompts and sends the event test automatically. Refresh the story to replay." } },
   },
   render: args => <ExternalAgentInvitePreview key={JSON.stringify(args)} {...args} />,
 } satisfies Meta<typeof ExternalAgentInvitePreview>;
@@ -22,7 +22,7 @@ export const WatchingDotConnect: Story = { name: "Dot · Watching task updates",
 export const ConfirmingRoundTrip: Story = { name: "Dot · Confirming the round trip", args: { initialScreen: "setup", initialConnection: { phase: "testing" }, simulate: false } };
 export const DotReady: Story = { name: "Dot · Ready for tasks", args: { initialScreen: "setup", initialConnection: { phase: "ready" } } };
 export const RetryEvent: Story = { name: "Recovery · Retry the test event", args: { initialScreen: "setup", initialConnection: { phase: "testing", problem: "event_timeout" } } };
-export const ExpiredPrompt: Story = { name: "Recovery · Expired prompt", args: { initialScreen: "setup", initialConnection: { phase: "waiting", problem: "expired" } } };
+export const RefreshingPrompt: Story = { name: "Setup · Preparing a fresh prompt automatically", args: { initialScreen: "setup", preparing: true, simulate: false } };
 export const WatchingInterrupted: Story = { name: "Recovery · Connection updates interrupted", args: { initialScreen: "setup", initialConnection: { phase: "connected", problem: "offline" } } };
 export const Hermes: Story = { name: "Hermes · Existing invitation prompt", args: { initialScreen: "setup", initialPreset: "hermes" } };
 export const Other: Story = { name: "Other · Existing invitation prompt", args: { initialScreen: "setup", initialPreset: "other" } };
