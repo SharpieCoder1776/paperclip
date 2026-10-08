@@ -4,7 +4,7 @@ import { isAcpxCanonicalInputMethod } from "../drivers/acpx/profile-extensions.j
 import { RunnerdTraceFrameIndex } from "./runnerd-trace-frame-index.js";
 import { waitForWarmAttachmentReadiness } from "./warm-attachment-readiness.js";
 import { codexExecutableReadOnlyRoots } from "../drivers/codex/codex-security-config.js";
-import { resolvePinnedCodexCommand } from "../drivers/codex/codex-command.js";
+import { resolveCodexCommand } from "../drivers/codex/codex-command.js";
 import { isCanonicalProviderEventType } from "../provider-events.js";
 import { execFileSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -4612,7 +4612,7 @@ class DurablePrpCodexTransport implements CodexAppServerTransport {
     const providerNodeCommand =
       this.options.providerNodeCommand ?? process.execPath;
     const effectiveCodexCommand = provider === "codex"
-      ? this.options.codexCommand ?? resolvePinnedCodexCommand()
+      ? this.options.codexCommand ?? resolveCodexCommand(undefined, this.options.environment)
       : undefined;
     const opencodeExecutable =
       provider === "opencode"

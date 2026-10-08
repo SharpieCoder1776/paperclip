@@ -51,7 +51,7 @@ Actual npm install testing exposed a collision with the unchanged legacy Codex
 adapter. Move platform dependency declarations from the bundled wrapper metadata
 to the published server manifest, preserving the wrapper code and patched bridge.
 The existing installer checks must prove both native and legacy version selection,
-and the runtime must still verify the selected executable's version and digest.
+and artifact qualification must still verify the selected executable's version and digest.
 Direct/source runtimes retain their own dependency declarations. A CI credential
 test fixture also reserves its ports before making its unchanged denial assertion.
 Installed-consumer verification also checks the native vendor sandbox read roots
@@ -65,6 +65,23 @@ packaging tests and public npm consumer sandbox to prove an empty Codex binary
 payload in Paperclip tarballs, host-only npm resolution, pinned execution, and
 unchanged integrity checks. Record the final revision and hosted results in the
 canonical PR description before handoff.
+
+### Codex CLI compatibility, 2026-10-08
+
+The user requested tolerance for usable older Codex installations. Ordinary native
+Codex startup, direct evals, and browser login now prefer the installed dependency
+without requiring its version to equal the release pin. When the dependency is
+absent, resolve an executable from the selected host's PATH. Explicit commands and
+recorded sessions retain precedence; remote runs never borrow a controller CLI.
+Actual protocol/login failures remain setup/run errors. Release pins and the
+separate ACPX artifact-integrity qualification remain unchanged.
+
+The normalized npm resource lookup accepts version differences while retaining
+package identities, actual resolver bindings, host compatibility, canonical paths,
+and narrow vendor read grants. Existing tests cover older/newer metadata, PATH
+fallback, installed preference, credential isolation, unsafe manifests and paths,
+and session continuity. Reopen current-head CI and fresh review for this refinement;
+record its tested revision and exact evidence in the PR before handoff.
 
 ## Evidence and gates
 

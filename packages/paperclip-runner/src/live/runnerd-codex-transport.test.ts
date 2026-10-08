@@ -1941,13 +1941,13 @@ it("denies the isolated Codex home without denying a remote execution workspace"
   expect(serialized).toContain('\":workspace_roots\"={\".\"=\"write\"}');
 });
 
-it.each(["bundled", "explicit"] as const)("records the %s Codex command before launch without resolving an ambient CLI", async (selection) => {
+it.each(["installed", "explicit"] as const)("records the selected %s Codex command before launch", async (selection) => {
   const root = await mkdtemp(join(tmpdir(), "paperclip-codex-command-selection-"));
   const command = join(root, "codex");
   const runnerBinary = join(root, "runnerd");
   await writeFile(command, "#!/bin/sh\nexit 99\n", { mode: 0o700 });
   await writeFile(runnerBinary, "unexecuted fixture artifact", { mode: 0o700 });
-  const resolver = vi.spyOn(codexCommandRuntime, "resolvePinnedCodexCommand").mockReturnValue(command);
+  const resolver = vi.spyOn(codexCommandRuntime, "resolveCodexCommand").mockReturnValue(command);
   let template: Record<string, unknown> | null = null;
   const launch = vi.fn(() => { throw new Error("A provider process must not start in this fixture"); });
   const { transport } = createCapabilityRunnerdCodexTransport({
@@ -1966,7 +1966,7 @@ it.each(["bundled", "explicit"] as const)("records the %s Codex command before l
     expect(template).toMatchObject({ provider: { command, model: "gpt-6.1-sol" } });
     expect(JSON.stringify(template)).toContain(`${JSON.stringify(command).replaceAll('"', '\\"')}=\\"read\\"`);
     if (selection === "explicit") expect(resolver).not.toHaveBeenCalled();
-    else expect(resolver).toHaveBeenCalledOnce();
+    else expect(resolver).toHaveBeenCalledExactlyOnceWith(undefined, { PATH: "/missing-ambient-codex" });
     expect(launch).not.toHaveBeenCalled();
   } finally {
     resolver.mockRestore();
@@ -1979,7 +1979,7 @@ it("rejects remote Codex without a guest executable before resolving controller 
   const root = await mkdtemp(join(tmpdir(), "paperclip-runner-remote-codex-command-"));
   const runnerBinary = join(root, "runnerd");
   await writeFile(runnerBinary, "unexecuted fixture artifact", { mode: 0o700 });
-  const resolver = vi.spyOn(codexCommandRuntime, "resolvePinnedCodexCommand").mockImplementation(() => {
+  const resolver = vi.spyOn(codexCommandRuntime, "resolveCodexCommand").mockImplementation(() => {
     throw new Error("Controller package resolution must not authorize a guest executable");
   });
   const { transport } = createCapabilityRunnerdCodexTransport({
@@ -2013,7 +2013,7 @@ it.each(["missing", "changed"] as const)("reuses the recorded Codex command when
   await core.stop();
   await mkdir(join(root, "runner"), { mode: 0o700 });
   await writeFile(join(root, "runner", "runner-state.json"), JSON.stringify({ schema: "paperclip.runner.durable.state.v1", ...priorIdentity, lifecycle: "suspended" }), { mode: 0o600 });
-  const resolver = vi.spyOn(codexCommandRuntime, "resolvePinnedCodexCommand").mockImplementation(() => {
+  const resolver = vi.spyOn(codexCommandRuntime, "resolveCodexCommand").mockImplementation(() => {
     if (discovery === "missing") throw new Error("The current dependency is missing");
     return replacement;
   });

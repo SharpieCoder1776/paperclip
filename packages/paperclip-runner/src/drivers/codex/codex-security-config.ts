@@ -77,23 +77,26 @@ export function codexExecutableReadOnlyRoots(source: NodeJS.ProcessEnv, command 
 function normalizedCodexPlatformManifest(runtimeManifest: string, platformPackage: string): string | undefined {
   const profile = QUALIFIED_ACPX_PROFILES.codex;
   const runtime = readCodexPackageManifest(runtimeManifest);
-  if (runtime.name !== profile.agentRuntimePackage || runtime.version !== profile.agentRuntimeVersion
-    || runtime.optionalDependencies !== undefined) return undefined;
-  const expectedVersion = `${profile.agentRuntimeVersion}-${process.platform}-${process.arch}`;
-  const expectedDeclaration = `npm:${profile.agentRuntimePackage}@${expectedVersion}`;
+  if (runtime.name !== profile.agentRuntimePackage || runtime.optionalDependencies !== undefined) return undefined;
   for (let root = dirname(dirname(runtimeManifest)), depth = 0; depth < 24; depth += 1) {
     const serverManifest = resolve(root, "package.json");
     if (existsSync(serverManifest)) {
       const server = readCodexPackageManifest(serverManifest);
       if (server.name === "@paperclipai/server") {
-        if (server.dependencies?.[profile.agentServerPackage] !== profile.agentServerVersion
-          || server.optionalDependencies?.[platformPackage] !== expectedDeclaration
+        const bridgeDeclaration = server.dependencies?.[profile.agentServerPackage];
+        const platformDeclaration = server.optionalDependencies?.[platformPackage];
+        const declarationPrefix = `npm:${profile.agentRuntimePackage}@`;
+        const declarationSuffix = `-${process.platform}-${process.arch}`;
+        if (typeof bridgeDeclaration !== "string" || !bridgeDeclaration.trim()
+          || typeof platformDeclaration !== "string" || !platformDeclaration.startsWith(declarationPrefix)
+          || !platformDeclaration.endsWith(declarationSuffix)
+          || !/^[0-9A-Za-z][0-9A-Za-z.+-]*$/.test(platformDeclaration.slice(declarationPrefix.length, -declarationSuffix.length))
           || !codexPathInside(resolve(root, "node_modules"), runtimeManifest)) return undefined;
         const bridgeManifest = createRequire(serverManifest).resolve(`${profile.agentServerPackage}/package.json`);
         if (!codexPathInside(resolve(root, "node_modules"), bridgeManifest)
           || realpathSync(bridgeManifest) !== bridgeManifest) return undefined;
         const bridge = readCodexPackageManifest(bridgeManifest);
-        if (bridge.name !== profile.agentServerPackage || bridge.version !== profile.agentServerVersion
+        if (bridge.name !== profile.agentServerPackage
           || createRequire(bridgeManifest).resolve(`${profile.agentRuntimePackage}/package.json`) !== runtimeManifest) return undefined;
         const runtimeSelection = createRequire(runtimeManifest).resolve(`${platformPackage}/package.json`);
         const selected = createRequire(serverManifest).resolve(`${platformPackage}/package.json`);
@@ -109,7 +112,6 @@ function normalizedCodexPlatformManifest(runtimeManifest: string, platformPackag
         if (!slot) return undefined;
         const native = readCodexPackageManifest(selected);
         if ((native.name !== platformPackage && native.name !== profile.agentRuntimePackage)
-          || native.version !== expectedVersion
           || !Array.isArray(native.os) || !native.os.includes(process.platform)
           || !Array.isArray(native.cpu) || !native.cpu.includes(process.arch)) return undefined;
         return selected;

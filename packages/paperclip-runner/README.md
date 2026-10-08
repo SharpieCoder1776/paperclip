@@ -58,12 +58,19 @@ checks installed dependency pins and agreement with Cursor's distribution manife
 and immutable release attestation (`cursor-contract.json`). Cursor's per-platform
 closure pins are generated from `cursor-distributions.json`.
 
-Packaged Codex startup and browser login resolve the Codex CLI from the installed
-ACP bridge dependency graph. They verify the qualified version and the executable
-path before launch. An explicit execution command still takes precedence. A
-missing or mismatched installed runtime returns an installation error; it does not
-borrow a different Codex installation from `PATH`. Linux ARM64 retains its
-existing legacy login path because native execution is not qualified there.
+Codex startup and browser login prefer the CLI from the installed dependency
+graph. If that dependency is absent, they use an executable `codex` from the
+selected execution host's `PATH`. An explicit execution command takes precedence,
+and resumed sessions retain their recorded command. Older or newer CLI versions
+are allowed; compatibility is established by the actual protocol or login attempt.
+Missing executables and real protocol failures still return actionable errors.
+Package identity, executable containment, and isolated credential homes remain
+checked. Linux ARM64 retains its existing legacy login path because native
+execution is not qualified there.
+
+Exact dependency pins remain release and ACPX artifact-qualification checks.
+They make published builds reproducible and verify sandbox artifacts; they do not
+add a version-number gate to ordinary native Codex startup or browser login.
 
 Release packages retain the pinned Codex JavaScript dependency graph, but do not
 bundle Codex native binaries. The published manifest declares the official,

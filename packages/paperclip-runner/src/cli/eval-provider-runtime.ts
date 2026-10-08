@@ -1,4 +1,4 @@
-import { resolvePinnedCodexCommand } from "../drivers/codex/codex-command.js";
+import { resolveCodexCommand } from "../drivers/codex/codex-command.js";
 
 import type { CapabilityRunnerdCodexTransportOptions } from "../live/runnerd-codex-transport.js";
 
@@ -20,5 +20,5 @@ export function evalProviderTransportOptions(
     return { acpxPermissionMode: "approve-all", acpxPermissionModePinned: true };
   }
   if (provider !== "codex") return {};
-  return { codexCommand: resolvePinnedCodexCommand() };
+  return { codexCommand: resolveCodexCommand() };
 }

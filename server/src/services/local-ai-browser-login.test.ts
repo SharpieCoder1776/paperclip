@@ -3,10 +3,10 @@ import { mkdtemp, mkdir, readFile, realpath, rm, stat, writeFile } from "node:fs
 import os from "node:os";
 import path from "node:path";
 import { startLocalBrowserLogin } from "./local-ai-browser-login.js";
-import { resolvePinnedCodexCommand } from "../vendor/paperclip-runner/index.js";
+import { resolveCodexCommand } from "../vendor/paperclip-runner/index.js";
 
 vi.mock("../vendor/paperclip-runner/index.js", () => ({
-  resolvePinnedCodexCommand: vi.fn(),
+  resolveCodexCommand: vi.fn(),
 }));
 
 const initialPath = process.env.PATH;
@@ -28,7 +28,7 @@ async function fakeCli(name: string, source: string) {
   const bin = path.join(root, "bin");
   await mkdir(bin, { recursive: true });
   await writeFile(path.join(bin, name), `#!/bin/sh\n${source}\n`, { mode: 0o700 });
-  if (name === "codex") vi.mocked(resolvePinnedCodexCommand).mockReturnValue(path.join(bin, name));
+  if (name === "codex") vi.mocked(resolveCodexCommand).mockReturnValue(path.join(bin, name));
   process.env.PATH = `${bin}${path.delimiter}${initialPath}`;
   const home = path.join(root, "credential-home");
   await mkdir(home, { mode: 0o700 });
@@ -50,7 +50,7 @@ describe.skipIf(process.platform === "win32")("local browser subscription login"
       '[ -z "$OPENAI_API_KEY$CODEX_API_KEY$ANTHROPIC_API_KEY$ANTHROPIC_AUTH_TOKEN$CLAUDE_CODE_OAUTH_TOKEN" ] || exit 14',
       'printf "1. Open this link in your browser and sign in to your account\\nhttps://auth.openai.com/codex/device\\n2. Enter this one-time code (expires in 15 minutes)\\nABCD-EFGHJ\\n"',
     ].join("\n"));
-    if (legacy) vi.mocked(resolvePinnedCodexCommand).mockImplementation(() => { throw new Error("native artifact is unavailable"); });
+    if (legacy) vi.mocked(resolveCodexCommand).mockImplementation(() => { throw new Error("native artifact is unavailable"); });
     else process.env.PATH = "/usr/bin:/bin";
     const ambientHome = path.join(root!, "unrelated-host-home");
     await mkdir(ambientHome, { mode: 0o700 });
@@ -59,19 +59,19 @@ describe.skipIf(process.platform === "win32")("local browser subscription login"
       vi.stubEnv(key, "unrelated-host-value");
     const login = startLocalBrowserLogin("openai", home);
     await vi.waitFor(() => expect(login.outcome).toBe("success"), { timeout: 5000 });
-    if (legacy) expect(resolvePinnedCodexCommand).not.toHaveBeenCalled();
-    else expect(resolvePinnedCodexCommand).toHaveBeenCalledOnce();
+    if (legacy) expect(resolveCodexCommand).not.toHaveBeenCalled();
+    else expect(resolveCodexCommand).toHaveBeenCalledOnce();
     expect(login.code).toBe("ABCD-EFGHJ");
   });
 
-  it.each([["linux", "x64"], ["darwin", "arm64"], ["darwin", "x64"]] as const)("fails closed on missing qualified Codex artifacts on %s/%s", async (platform, architecture) => {
+  it.each([["linux", "x64"], ["darwin", "arm64"], ["darwin", "x64"]] as const)("reports an unavailable Codex CLI on %s/%s without revealing private details", async (platform, architecture) => {
     targetPlatform(platform, architecture);
     const home = await fakeCli("codex", 'echo invoked > "$CODEX_HOME/unreviewed-cli"');
     const failure = new Error("private-installation-path-or-provider-output");
-    vi.mocked(resolvePinnedCodexCommand).mockImplementation(() => { throw failure; });
+    vi.mocked(resolveCodexCommand).mockImplementation(() => { throw failure; });
     const login = startLocalBrowserLogin("openai", home);
     await vi.waitFor(() => expect(login.outcome).toBe("failure"), { timeout: 5000 });
-    expect(login.error).toMatch(/requires the qualified runtime.*Reinstall Paperclip/);
+    expect(login.error).toMatch(/requires an installed Codex CLI.*Install Codex/);
     expect(JSON.stringify(login)).not.toContain(failure.message);
     await expect(readFile(path.join(home, "unreviewed-cli"))).rejects.toMatchObject({ code: "ENOENT" });
     expect(login.authorizationUrl).toBeUndefined();
@@ -85,7 +85,7 @@ describe.skipIf(process.platform === "win32")("local browser subscription login"
     await vi.waitFor(() => expect(login.outcome).toBe("failure"), { timeout: 5000 });
     expect(login.error).toMatch(/requires the Codex CLI.*Install Codex.*Paperclip's PATH/);
     expect(JSON.stringify(login)).not.toContain(process.env.PATH);
-    expect(resolvePinnedCodexCommand).not.toHaveBeenCalled();
+    expect(resolveCodexCommand).not.toHaveBeenCalled();
   });
 
   it("reports a missing terminal prerequisite without exposing spawn details", async () => {

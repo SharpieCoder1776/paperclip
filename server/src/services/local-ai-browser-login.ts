@@ -5,7 +5,7 @@ import path from "node:path";
 import { runSetupTokenLogin } from "@paperclipai/adapter-claude-local/server";
 import { runDeviceLogin } from "@paperclipai/adapter-codex-local/server";
 import { ensureCommandResolvable, resolveCommandForLogs } from "@paperclipai/adapter-utils/server-utils";
-import { resolvePinnedCodexCommand } from "../vendor/paperclip-runner/index.js";
+import { resolveCodexCommand } from "../vendor/paperclip-runner/index.js";
 
 export type LocalBrowserLoginState = {
   authorizationUrl?: string;
@@ -57,20 +57,20 @@ export function startLocalBrowserLogin(provider: "anthropic" | "openai", home: s
       let executable = "claude";
       if (provider === "openai") {
         // Linux ARM64 retains its supported legacy CLI path; it is not a
-        // qualified native runner target. Missing qualified artifacts elsewhere
-        // never authorize a fallback to a different installation.
+        // qualified native runner target. Other hosts prefer the installed
+        // dependency, then an existing CLI when the dependency is absent.
         const legacyPlatform = process.platform === "linux" && process.arch === "arm64";
         try {
           if (legacyPlatform) {
             await ensureCommandResolvable("codex", home, process.env);
             executable = path.resolve(home, await resolveCommandForLogs("codex", home, process.env));
           } else {
-            executable = resolvePinnedCodexCommand();
+            executable = resolveCodexCommand();
           }
         } catch {
           state.error = legacyPlatform
             ? "Codex browser sign-in requires the Codex CLI on this platform. Install Codex on this execution host and ensure codex is on Paperclip's PATH, then start sign-in again."
-            : "Codex browser sign-in requires the qualified runtime for this platform. Reinstall Paperclip's runtime dependencies, then start sign-in again.";
+            : "Codex browser sign-in requires an installed Codex CLI. Install Codex on this execution host or restore Paperclip's runtime dependencies, then start sign-in again.";
           throw new Error("Browser login runtime unavailable");
         }
       }

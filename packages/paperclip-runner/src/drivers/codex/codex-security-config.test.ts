@@ -21,19 +21,24 @@ describe("Codex security configuration", () => {
       encoding: "utf8", timeout: 30_000, maxBuffer: 16 * 1024 }).trim()).toBe("codex-cli 0.160.0");
   });
 
-  it("resolves an isolated public server dependency graph and rejects missing, mismatched or escaped commands", () => {
+  it("resolves usable installed Codex commands and an absent-package PATH fallback while rejecting malformed or escaped dependencies", () => {
     // Vitest adds its dependency directories to global module lookup paths.
     // Use the existing Node/tsx boundary so an absent fixture dependency cannot
     // be supplied by the test runner's installed bridge instead.
     const source = `
       import assert from "node:assert/strict";
       import { execFileSync } from "node:child_process";
+      import { createRequire } from "node:module";
       import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
       import { tmpdir } from "node:os";
       import { dirname, join } from "node:path";
-      import { resolvePinnedCodexCommand } from ${JSON.stringify(new URL("./codex-command.ts", import.meta.url).href)};
+      import { resolveCodexCommand, resolvePinnedCodexCommand } from ${JSON.stringify(new URL("./codex-command.ts", import.meta.url).href)};
       import { codexExecutableReadOnlyRoots, createIsolatedCodexAppServerArgs } from ${JSON.stringify(new URL("./codex-security-config.ts", import.meta.url).href)};
       const root = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-pinned-codex-test-")));
+      const pathOnlyRoot = realpathSync(mkdtempSync(join(tmpdir(), "paperclip-path-codex-test-")));
+      const pathDirectory = join(pathOnlyRoot, "bin");
+      const pathCommand = join(pathDirectory, "codex");
+      const commandEnvironment = { PATH: pathDirectory };
       const issuer = join(root, "node_modules/@paperclipai/server/dist/vendor/paperclip-runner/drivers/codex/codex-command.js");
       const adapter = join(root, "node_modules/@paperclipai/adapter-codex-local");
       const bridge = join(adapter, "node_modules/@agentclientprotocol/codex-acp");
@@ -44,6 +49,22 @@ describe("Codex security configuration", () => {
       const metadata = { name: "@openai/codex", version: "0.160.0", bin: { codex: "bin/codex.js" },
         optionalDependencies: { [platformName]: "npm:@openai/codex@0.160.0-" + process.platform + "-" + process.arch } };
       try {
+        mkdirSync(pathDirectory);
+        writeFileSync(pathCommand, "#!" + process.execPath + "\\nif (process.argv.slice(2).join(' ') !== '--version') process.exit(9); console.log('codex-cli 0.141.0');\\n", { mode: 0o755 });
+        const pathOnlyIssuer = join(pathOnlyRoot, "standalone-command.js");
+        assert.equal(resolveCodexCommand(pathOnlyIssuer, commandEnvironment), pathCommand, "Only absent dependency graphs use the selected PATH command");
+        assert.equal(execFileSync(resolveCodexCommand(pathOnlyIssuer, commandEnvironment), ["--version"], {
+          env: commandEnvironment, encoding: "utf8", timeout: 5_000 }).trim(), "codex-cli 0.141.0");
+        const directCodex = join(pathOnlyRoot, "node_modules/@openai/codex");
+        const directCommand = join(directCodex, "bin/codex.js");
+        mkdirSync(dirname(directCommand), { recursive: true });
+        writeFileSync(join(directCodex, "package.json"), JSON.stringify({ ...metadata, version: "0.155.0" }));
+        writeFileSync(directCommand, "#!" + process.execPath + "\\n", { mode: 0o755 });
+        assert.equal(resolveCodexCommand(pathOnlyIssuer, commandEnvironment), directCommand, "A directly installed older wrapper takes precedence over PATH");
+        writeFileSync(join(directCodex, "package.json"), JSON.stringify({ ...metadata, name: "unowned-wrapper" }));
+        assert.throws(() => resolveCodexCommand(pathOnlyIssuer, commandEnvironment), /unexpected package identity/);
+        writeFileSync(join(directCodex, "package.json"), "{");
+        assert.throws(() => resolveCodexCommand(pathOnlyIssuer, commandEnvironment), /runtime unavailable/);
         mkdirSync(dirname(issuer), { recursive: true });
         mkdirSync(join(codex, "bin"), { recursive: true });
         writeFileSync(join(adapter, "package.json"), JSON.stringify({ name: "@paperclipai/adapter-codex-local", exports: { "./server": "./server.js" } }));
@@ -55,30 +76,47 @@ describe("Codex security configuration", () => {
           os: [process.platform], cpu: [process.arch] };
         writeFileSync(join(platform, "package.json"), JSON.stringify(platformMetadata));
         writeFileSync(executable, "#!" + process.execPath + "\\nif (process.argv.slice(2).join(' ') !== '--version') process.exit(9); console.log('codex-cli 0.160.0');\\n", { mode: 0o755 });
-        assert.equal(resolvePinnedCodexCommand(issuer), executable);
+        assert.equal(resolveCodexCommand(issuer, commandEnvironment), executable, "The selected installed bridge closure takes precedence over PATH");
+        assert.equal(resolvePinnedCodexCommand(issuer, commandEnvironment), executable, "The published compatibility alias keeps ordinary command semantics");
         const roots = codexExecutableReadOnlyRoots({ PATH: "/missing-codex-command" }, executable);
         assert.ok(roots.includes(vendor), "The npm-hoisted native vendor directory remains readable");
         assert.ok(!roots.includes(platform) && !roots.includes(root), "Hoisting must not expose npm ancestry");
-        assert.equal(execFileSync(resolvePinnedCodexCommand(issuer), ["--version"], { env: { PATH: "/missing-codex-command" },
+        assert.equal(execFileSync(resolveCodexCommand(issuer, commandEnvironment), ["--version"], { env: { PATH: "/missing-codex-command" },
           encoding: "utf8", timeout: 5_000 }).trim(), "codex-cli 0.160.0");
 
         for (const bin of ["../../escaped-codex", "/usr/bin/codex", {}, ""]) {
           writeFileSync(join(codex, "package.json"), JSON.stringify({ ...metadata, bin }));
-          assert.throws(() => resolvePinnedCodexCommand(issuer), /contained executable|escapes its package/);
+          assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /contained executable|escapes its package/);
         }
-        writeFileSync(join(codex, "package.json"), JSON.stringify({ ...metadata, version: "0.159.0" }));
-        assert.throws(() => resolvePinnedCodexCommand(issuer), /version mismatch.*0\\.160\\.0/);
+        for (const version of ["0.159.0", "0.161.0"]) {
+          writeFileSync(join(codex, "package.json"), JSON.stringify({ ...metadata, version }));
+          assert.equal(resolveCodexCommand(issuer, commandEnvironment), executable, "Independently usable older and newer installed wrappers remain selectable");
+        }
+        writeFileSync(join(codex, "package.json"), JSON.stringify({ ...metadata, name: "unowned-wrapper" }));
+        assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /unexpected package identity/);
+        writeFileSync(join(codex, "package.json"), "{");
+        assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /runtime unavailable/);
         writeFileSync(join(codex, "package.json"), JSON.stringify(metadata));
         chmodSync(executable, 0o600);
-        assert.throws(() => resolvePinnedCodexCommand(issuer), /runtime unavailable/);
+        assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /runtime unavailable/);
         rmSync(executable);
         writeFileSync(join(root, "external-codex"), "external executable", { mode: 0o755 });
         symlinkSync(join(root, "external-codex"), executable);
-        assert.throws(() => resolvePinnedCodexCommand(issuer), /escapes its package/);
+        assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /escapes its package/);
         rmSync(executable);
-        assert.throws(() => resolvePinnedCodexCommand(issuer), /runtime unavailable/);
+        assert.throws(() => resolveCodexCommand(issuer, commandEnvironment), /runtime unavailable/);
         rmSync(codex, { recursive: true });
-        assert.throws(() => resolvePinnedCodexCommand(issuer), /runtime unavailable.*Reinstall/);
+        // Use the existing fresh-process boundary: Node caches earlier module
+        // paths, whereas a genuinely absent installed graph must use PATH.
+        const resolverModule = ${JSON.stringify(new URL("./codex-command.ts", import.meta.url).href)};
+        const freshAbsence = [
+          'import assert from "node:assert/strict";',
+          'import { resolveCodexCommand } from ' + JSON.stringify(resolverModule) + ';',
+          'assert.equal(resolveCodexCommand(' + JSON.stringify(issuer) + ',' + JSON.stringify(commandEnvironment) + '),' + JSON.stringify(pathCommand) + ');',
+          'assert.throws(() => resolveCodexCommand(' + JSON.stringify(issuer) + ', { PATH: "/missing-codex-command" }), /runtime unavailable.*No installed Codex dependency or executable on PATH/);',
+        ].join("\\n");
+        execFileSync(process.execPath, ['--no-global-search-paths', '--import', createRequire(resolverModule).resolve('tsx'),
+          '--input-type=module', '--eval', freshAbsence], { env: commandEnvironment, encoding: 'utf8', timeout: 5_000 });
 
         // npm installs the host alias declared by the published server while
         // its bundled JS wrapper deliberately omits optionalDependencies.
@@ -106,25 +144,46 @@ describe("Codex security configuration", () => {
         for (const ancestor of [platform, dirname(platform), join(root, "node_modules"), server, root]) {
           assert.ok(!normalizedRoots().includes(ancestor), "Platform discovery must not grant enclosing npm or server roots");
         }
+        const restoreMetadata = () => {
+          writeFileSync(serverManifest, JSON.stringify(serverMetadata));
+          writeFileSync(publishedBridgeManifest, JSON.stringify(publishedBridgeMetadata));
+          writeFileSync(normalizedManifest, JSON.stringify(normalizedMetadata));
+          writeFileSync(join(platform, "package.json"), JSON.stringify(platformMetadata));
+        };
+        // Resource lookup protects package ownership and paths. Version
+        // qualification belongs to ACPX, not ordinary Codex shell access.
+        for (const version of ["0.159.0", "0.161.0"]) {
+          for (const [path, changed] of [
+            [serverManifest, { ...serverMetadata, optionalDependencies: { [platformName]: "npm:@openai/codex@" + version + "-" + process.platform + "-" + process.arch } }],
+            [serverManifest, { ...serverMetadata, dependencies: { "@agentclientprotocol/codex-acp": version } }],
+            [publishedBridgeManifest, { ...publishedBridgeMetadata, version }],
+            [normalizedManifest, { ...normalizedMetadata, version }],
+            [join(platform, "package.json"), { ...platformMetadata, version: version + "-" + process.platform + "-" + process.arch }],
+          ]) {
+            writeFileSync(path, JSON.stringify(changed));
+            assert.ok(normalizedRoots().includes(vendor), "Older or newer usable metadata must retain native resources independently of other version numbers");
+            for (const ancestor of [platform, dirname(platform), server, root]) assert.ok(!normalizedRoots().includes(ancestor));
+            restoreMetadata();
+          }
+        }
         for (const [path, changed] of [
           [serverManifest, { ...serverMetadata, optionalDependencies: {} }],
-          [serverManifest, { ...serverMetadata, optionalDependencies: { [platformName]: "npm:@openai/codex@0.159.0-" + process.platform + "-" + process.arch } }],
-          [serverManifest, { ...serverMetadata, dependencies: { "@agentclientprotocol/codex-acp": "1.5.0" } }],
-          [publishedBridgeManifest, { ...publishedBridgeMetadata, version: "1.5.0" }],
+          [serverManifest, { ...serverMetadata, name: "unowned-server" }],
+          [serverManifest, { ...serverMetadata, optionalDependencies: { [platformName]: "npm:unowned/codex@0.160.0-" + process.platform + "-" + process.arch } }],
+          [serverManifest, { ...serverMetadata, optionalDependencies: { [platformName]: "file:/unowned/native" } }],
+          [serverManifest, { ...serverMetadata, optionalDependencies: { [platformName]: "npm:@openai/codex@0.160.0-unsupported-os-" + process.arch } }],
+          [serverManifest, { ...serverMetadata, dependencies: {} }],
+          [serverManifest, { ...serverMetadata, dependencies: { "@agentclientprotocol/codex-acp": "" } }],
           [publishedBridgeManifest, { ...publishedBridgeMetadata, name: "unqualified-bridge" }],
-          [normalizedManifest, { ...normalizedMetadata, version: "0.159.0" }],
+          [normalizedManifest, { ...normalizedMetadata, name: "unowned-wrapper" }],
           [normalizedManifest, { ...normalizedMetadata, optionalDependencies: {} }],
           [join(platform, "package.json"), { ...platformMetadata, name: "unqualified-native" }],
-          [join(platform, "package.json"), { ...platformMetadata, version: "0.159.0-" + process.platform + "-" + process.arch }],
           [join(platform, "package.json"), { ...platformMetadata, os: ["unsupported-os"] }],
           [join(platform, "package.json"), { ...platformMetadata, cpu: ["unsupported-cpu"] }],
         ]) {
           writeFileSync(path, JSON.stringify(changed));
           assert.ok(!normalizedRoots().includes(vendor), "Unqualified metadata must not grant native resources");
-          writeFileSync(serverManifest, JSON.stringify(serverMetadata));
-          writeFileSync(publishedBridgeManifest, JSON.stringify(publishedBridgeMetadata));
-          writeFileSync(normalizedManifest, JSON.stringify(normalizedMetadata));
-          writeFileSync(join(platform, "package.json"), JSON.stringify(platformMetadata));
+          restoreMetadata();
         }
         const outsideVendor = join(root, "outside-vendor");
         mkdirSync(outsideVendor);
@@ -140,7 +199,7 @@ describe("Codex security configuration", () => {
         rmSync(platform); mkdirSync(vendor, { recursive: true });
         writeFileSync(join(platform, "package.json"), JSON.stringify(platformMetadata));
 
-      } finally { rmSync(root, { recursive: true, force: true }); }
+      } finally { rmSync(root, { recursive: true, force: true }); rmSync(pathOnlyRoot, { recursive: true, force: true }); }
       process.stdout.write("PINNED_CODEX_ISOLATION_VERIFIED");
     `;
     expect(execFileSync(process.execPath, [
