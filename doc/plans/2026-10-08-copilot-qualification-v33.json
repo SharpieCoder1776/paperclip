@@ -1,6 +1,6 @@
 {
   "schema": "paperclip.copilot.production-qualification/v33",
-  "updatedAt": "2026-10-08T18:33:47.962516+00:00",
+  "updatedAt": "2026-10-08T19:04:43.055832+00:00",
   "qualifiedApplicationSource": "024e1422f9c7b43ff1b083e7d8a25e1969dc4acf",
   "reviewedApplicationSource": "50d54d78e552869cae154d88ade68063191a547e",
   "runtimeArtifactSource": "941fbcb664a885eea713e732edc10ac133c62238",
@@ -277,14 +277,26 @@
     "qualifiedProfileChanged": false,
     "selectedLocalPolicyChanged": false,
     "selectedDaytonaPolicyChanged": false,
-    "ordinaryInstallCanary": "pending on reviewed source"
+    "ordinaryInstallCanary": "passed on reviewed source 50d54d78e552869cae154d88ade68063191a547e"
   },
   "canaries": {
-    "ordinaryLocal": "pending",
-    "ordinaryDaytona": "pending"
+    "ordinaryLocal": "passed on reviewed source",
+    "ordinaryDaytona": "pending",
+    "ordinaryLocalEvidence": {
+      "sourceRevision": "50d54d78e552869cae154d88ade68063191a547e",
+      "definition": "Exact hexadecimal bytes; same expected file and final response",
+      "artifactBytes": 30,
+      "proofSha256": "sha256:5e826570b86129ea16055d44f99978bf2414edac4791cb7e75a72b3f14e1b43a",
+      "acceptedCompletionEvidence": true,
+      "receiptReceiverAcknowledged": true,
+      "finalResponseCount": 1,
+      "cleanupConfirmed": true,
+      "qualificationOverrides": [],
+      "previousFailureRetained": true
+    }
   },
   "budget": {
-    "remainingConservativeAllowanceUsd": 39.86,
+    "remainingConservativeAllowanceUsd": 35.86,
     "nativeUsd": null,
     "billingEntity": "github",
     "budgetReset": false,
@@ -305,15 +317,42 @@
       "attempt": "v33 protocol admission attempt 1",
       "cause": "private eval closed allowlist lacked exact v33 profile; no provider session",
       "runtimeRepair": "private roster admission synchronized; all seven cases pass"
+    },
+    {
+      "attempt": "v33 ordinary local canary 1",
+      "cause": "Provider copied Markdown underscore escapes into a 34-byte file instead of the requested 30 bytes",
+      "runtimeRepair": null,
+      "definitionFollowup": "One changed definition specified exact hexadecimal bytes; expected file and final response unchanged; follow-up passed; original failure and cleanup retained"
     }
   ],
   "releaseGates": [
     "Exact v33 public image publication approval",
     "Ten exact native Daytona Product cells",
-    "Ordinary installed local and Daytona canaries on reviewed source",
+    "Ordinary installed Daytona canary on reviewed source",
     "Current-head CI and fresh clean review",
     "Separate code-owner approval, normal merge and shipped canary"
   ],
   "productionReady": false,
-  "shipped": false
+  "shipped": false,
+  "reviewedFixtureDelta": {
+    "sourceRevision": "dc5ebe3f92d405e284b096f5add797864bb0f74e",
+    "changedFiles": [
+      "tests/runner-e2e/copilot-protection-flow.ts",
+      "tests/runner-e2e/copilot-protection-settlement.test.ts"
+    ],
+    "finding": 4222861745,
+    "focusedRegressionsPassed": 82,
+    "productTypecheckPassed": true,
+    "caseDefinitionsChanged": false,
+    "behaviorAssertionsWeakened": false,
+    "newProviderCalls": 0,
+    "runtimeAndImageInputsChanged": false,
+    "imageContentId": "22fd2a8ae3414eee317e8d9df9fa6e526e43874d590bec84081ad00ff290a472",
+    "contentIdentityArguments": [],
+    "originalLiveGradesRelabeled": false,
+    "sourceHashes": {
+      "tests/runner-e2e/copilot-protection-flow.ts": "sha256:b396a29ed3f40c398591d6687798a31234c24f94753c5c048b831a84b7fef8c7",
+      "tests/runner-e2e/copilot-protection-settlement.test.ts": "sha256:bdbe4bb254ddfdfd0983a164e81a6b9e33c6f79c14d653ef2446a4f6c9f61a83"
+    }
+  }
 }
