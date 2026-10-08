@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
-import { cursorPlanToolIdentity, cursorToolIdentity } from "../drivers/acpx/cursor-plan-tool-identity.js";
+import { parseProviderMode } from "../contracts/provider-mode.js";
+import { acpxProfileActivity, type AcpxActivityAdapter, type AcpxToolEvidence } from "../drivers/acpx/profile-activity.js";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { deliverAcpxResponse, requireAcpxResponseDelivery } from "../drivers/acpx/response-delivery.js";
@@ -293,8 +293,7 @@ async function dispatch(
         clientCapabilities: acpxProfileClientCapabilities(params.agent),
         model: params.model,
         permissionMode: params.permissionMode,
-        cursorMode: params.cursorMode,
-        piThinkingLevel: params.piThinkingLevel,
+        mode: params.mode,
         providerPolicy: params.providerPolicy,
         systemInstructions: params.systemInstructions,
         runtimeContext: params.runtimeContext,
@@ -378,16 +377,14 @@ async function dispatch(
       waitForInput: (input, context) => waitForExtensionInput(currentTurnId, input, context),
       emit: event => emit("runtime.rich_event", { ...event }, currentTurnId),
     });
-    const evidenceFactory = openParams!.agent === "copilot" ? createCopilotToolEvidence
-      : openParams!.agent === "cursor" ? createCursorToolEvidence : undefined;
-    const toolEvidence = evidenceFactory?.({
+    const activity = acpxProfileActivity(activeAgent);
+    const toolEvidence = activity.createToolEvidence?.({
       sessionId: activeHost.identity().backendSessionId, turnId: currentTurnId,
       workingDirectory: openParams!.workingDirectory,
       active: () => turnId === currentTurnId && host === activeHost,
       emit: event => { validateAcpxRichEvent(event); emit("runtime.rich_event", { ...event }, currentTurnId); },
       unavailable: () => diagnostic(`${openParams!.agent}_evidence_unavailable`, "ACP tool evidence is incomplete; permission and terminal outcomes are unchanged."),
     });
-    activeCopilotEvidence = toolEvidence && "captureSemanticReceipt" in toolEvidence ? toolEvidence as CopilotToolEvidence : undefined;
     let usageBefore: unknown;
     try {
       usageBefore = await readSidecarHostStatusWithin(activeHost);
@@ -405,7 +402,7 @@ async function dispatch(
       turnId = null;
       throw error;
     }
-    void pumpTurn(currentTurnId, runtimeTurn, activeHost, usageBefore, extensions.drain, toolEvidence);
+    void pumpTurn(currentTurnId, runtimeTurn, activeHost, usageBefore, extensions.drain, activity, toolEvidence);
     // Warm sessions may defer initialize until their first prompt. Publish only
     // the capabilities of that live initialized connection, never old disk state.
     await runtimeTurn.promptStarted;
@@ -485,7 +482,9 @@ async function dispatch(
       pending.turnId !== expectedTurnId ||
       turnId !== expectedTurnId
     ) {
-      throw new Error("tool call is stale or unknown");
+      throw Object.assign(new Error("tool call is stale or unknown"), {
+        code: "ACPX_TOOL_CALL_STALE",
+      });
     }
     if (!tools.delete(callId))
       throw new Error("tool call lost its settlement race");
@@ -614,7 +613,8 @@ async function pumpTurn(
   activeHost: AcpxRuntimeHost,
   usageBefore: unknown,
   drainExtensions: () => Promise<void>,
-  toolEvidence?: CopilotToolEvidence | CursorToolEvidence,
+  activity: AcpxActivityAdapter,
+  toolEvidence?: AcpxToolEvidence,
 ): Promise<void> {
   let terminal: Record<string, unknown>;
   try {
@@ -641,8 +641,8 @@ async function pumpTurn(
     try {
       const usageAfter = await readSidecarHostStatusWithin(activeHost);
       try {
-        const cursorNotice = persistedCursorUsageNotice(usageBefore, usageAfter, runtimeTurn.requestId, openParams?.agent ?? null, `${currentTurnId}:cursor-native-usage`);
-        if (cursorNotice) { validateAcpxRichEvent(cursorNotice); emit("runtime.rich_event", { ...cursorNotice }, currentTurnId); }
+        const notice = activity.usageNotice?.(usageBefore, usageAfter, runtimeTurn.requestId, currentTurnId);
+        if (notice) { validateAcpxRichEvent(notice); emit("runtime.rich_event", { ...notice }, currentTurnId); }
       } catch {
         // Optional diagnostics must not suppress standard usage or terminal settlement.
       }
@@ -728,7 +728,6 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
     // This is the same roundtrip used by ordinary dynamic tools; emitting a
     // local semantic_result here would let an invalid review handoff appear
     // accepted before the server has checked it.
-    const commitNormalizedInput = call.captureNormalizedInput?.(validation.result);
     const forwarded = emit(
       "runtime.tool_called",
       {
@@ -753,7 +752,6 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
           // A pipe write alone does not prove receiver admission. Only this
           // call's turn-bound tool.resolve success confirms runnerd accepted
           // the validated body; rejection, cancellation and timeout stay null.
-          commitNormalizedInput?.();
           settle(result);
         },
         reject,
@@ -794,7 +792,7 @@ async function waitForPermission(
   agent: QualifiedAcpxAgent,
   request: AcpPermissionRequest,
   context: { signal: AbortSignal; responseDelivery?: Promise<void> },
-  toolEvidence?: CopilotToolEvidence | CursorToolEvidence,
+  toolEvidence?: AcpxToolEvidence,
 ): Promise<AcpPermissionDecision> {
   const { signal } = context;
   if (turnId !== activeTurnId || signal.aborted || permissions.size >= MAX_PENDING_INPUTS) {
@@ -881,7 +879,7 @@ async function waitForExtensionInput(
 ): Promise<Record<string, unknown>> {
   if (turnId !== activeTurnId || context.signal.aborted || inputs.size >= MAX_PENDING_INPUTS) return input.cancel();
   const responseDelivery = requireAcpxResponseDelivery(context);
-  const toolCallId = cursorPlanToolIdentity(openParams?.agent ?? initializedAgent, input);
+  const toolCallId = acpxProfileActivity(openParams?.agent ?? initializedAgent).inputToolIdentity?.(input);
   const requestId = stableRequestId(activeTurnId, ++requestSequence, context.requestId);
   return await new Promise((settle) => {
     const abort = () => {
@@ -1202,6 +1200,8 @@ function safeOutput(value: unknown): Record<string, unknown> {
 function parseOpenParams(
   value: Record<string, unknown>,
 ): AcpxSidecarOpenParams {
+  const fields = new Set(["runtimeDirectory", "normalizedSessionId", "workingDirectory", "agent", "model", "permissionMode", "mode", "permissionModePinned", "providerPolicy", "systemInstructions", "runtimeContext", "tools", "providerSessionKey", "expectedIdentity"]);
+  if (Object.keys(value).some(key => !fields.has(key))) throw new Error("ACPX open parameters include an unsupported field");
   const agent = requireQualifiedAgent(value.agent);
   const model = requiredText(value.model, "model");
   if (value.cursorMode !== undefined && agent !== "cursor") throw new Error("cursorMode is supported only for Cursor");
@@ -1225,8 +1225,7 @@ function parseOpenParams(
     agent,
     model,
     permissionMode: requiredPermissionMode(value.permissionMode),
-    ...(agent === "cursor" ? { cursorMode: requiredCursorMode(value.cursorMode === undefined ? "agent" : value.cursorMode) } : {}),
-    ...(piThinkingLevel ? { piThinkingLevel } : {}),
+    ...(value.mode === undefined ? {} : { mode: parseProviderMode(value.mode) }),
     permissionModePinned: value.permissionModePinned === true,
     ...(value.providerPolicy == null ? {} : { providerPolicy: parseProviderPolicy(value.providerPolicy) }),
     systemInstructions: boundedText(
@@ -1296,8 +1295,7 @@ function parseExpectedIdentity(value: unknown): AcpxExpectedSessionIdentity {
     ...(input.permissionMode === undefined
       ? {}
       : { permissionMode: requiredPermissionMode(input.permissionMode) }),
-    ...(input.cursorMode === undefined ? {} : { cursorMode: requiredCursorMode(input.cursorMode) }),
-    ...(input.piThinkingLevel === undefined ? {} : { piThinkingLevel: resolvePiThinkingLevel("pi", input.piThinkingLevel) }),
+    ...(input.mode === undefined ? {} : { mode: parseProviderMode(input.mode) }),
     providerLifetimeFenceCandidates: requiredFenceCandidates(
       input.providerLifetimeFenceCandidates,
     ),
@@ -1466,9 +1464,9 @@ function stableRequestId(
 }
 
 function stableProviderIdentity(value: string, kind: string): string {
-  // Cursor alone uses the richer permission/evidence identity policy. Other
-  // providers and message identities retain their existing sidecar mapping.
-  if (kind === "tool" && openParams?.agent === "cursor") return cursorToolIdentity(value);
+  // Adapters normalize native tool IDs before the shared sidecar bound.
+  const activity = acpxProfileActivity(openParams?.agent ?? initializedAgent);
+  if (kind === "tool" && activity.toolIdentity) return activity.toolIdentity(value);
   if (Buffer.byteLength(value) <= 240 && !/[\u0000-\u001f\u007f]/.test(value)) {
     return value;
   }

@@ -7,8 +7,8 @@ import { expect, type Page } from "@playwright/test";
 import { pollUntil, type RunnerApi } from "./api.js";
 import { collectRunEvents } from "./run-observations.js";
 import { createTaskThroughUi } from "./user-actions.js";
-import { observeRunProcesses, createDeniedTargetFixture } from "./copilot-local-fixtures.js";
-import { cursorDeniedCommand, hasCursorDeniedCommand, hasCursorCancellation, readCursorToolEvidence, assertCursorRemoteSnapshot, cursorRemoteDeniedSample, hasCursorRemoteRetirement, hasCursorRemoteWorkspaceUnchanged, type CursorRemoteSnapshot, type CursorRemoteBinding, type CursorToolNotice } from "./cursor-native-evidence.js";
+import { observeRunProcesses, createDeniedTargetFixture } from "./native-local-fixtures.js";
+import { cursorDeniedCommand, hasCursorDeniedCommand, hasCursorDeniedTurnTerminal, readCursorToolEvidence, assertCursorRemoteSnapshot, cursorRemoteDeniedSample, hasCursorRemoteRetirement, hasCursorRemoteWorkspaceUnchanged, type CursorRemoteSnapshot, type CursorRemoteBinding, type CursorToolNotice } from "./cursor-native-evidence.js";
 import { cursorNativeCaseDesigns, cursorNativePlanArtifactGate, hasCursorDenialBoundary, hasCursorPlanDecision, hasDeliveredCursorNativeRequest, hasExactCursorNativeResponse, type CursorNativeMethod } from "./cursor-native-cases.js";
 import type { LiveFixtureValues } from "./live-fixtures.js";
 import type { MatrixExecution } from "./types.js";
@@ -34,7 +34,7 @@ export function hasCursorAcceptedPlanWait(state: { issue: Row; runs: Row[]; inte
   if (state.runs.length !== 1 || state.issue.status !== "in_progress" || state.interactions.some(card => card.status === "pending")) return false;
   const run = state.runs[0]!;
   return run.status === "succeeded" && run.runtimeMode === "native" && run.nativeIssueId === state.issue.id
-    && run.runnerProfileJson?.nativeExecutionInput?.provider?.cursorMode === "plan"
+    && run.runnerProfileJson?.nativeExecutionInput?.provider?.mode === "plan"
     && run.resultJson?.finalizationPhase === "committed"
     && run.resultJson?.finalizationReasonCode === "native_plan_accepted_waiting_for_continuation"
     && run.resultJson?.authoritativeDecision === "in_progress";
@@ -140,7 +140,7 @@ export async function runCursorNativeFlow(input: {
   const deniedRelative = localDeniedTarget?.targetRelativePath ?? `cursor-denied-${nonce}.txt`;
   let deniedPath = remote ? "" : join(input.workspacePath, deniedRelative);
   let deniedCommand = remote ? null : cursorDeniedCommand(deniedPath);
-  let denialNotices: CursorToolNotice[] = []; let denialRunEvents: Row[] = []; let denialTurnId = ""; let cancelRequestedAt = NaN; let cancellationProven = false;
+  let denialNotices: CursorToolNotice[] = []; let denialRunEvents: Row[] = []; let denialTurnId = ""; let denialTerminalProven = false;
   const samples: Array<{ phase: string; path: string; absent: boolean; observedAt: number }> = [];
   const sampleDenied = async (phase: string, retained?: CursorRemoteSnapshot) => {
     let sample: { phase: string; path: string; absent: boolean; observedAt: number };
@@ -177,7 +177,7 @@ export async function runCursorNativeFlow(input: {
           processes = await pollUntil({ label: "observed Cursor provider retirement", deadlineAt: Date.now() + 5_000,
             load: async () => observeProcesses(), accept: observation => observation.live.length === 0 });
         }
-        const settled = runs.length === 1 && runs[0]!.status === "cancelled" && issue.status === "in_progress" && cancellationProven;
+        const settled = runs.length === 1 && denialTerminalProven && hasCursorDeniedTurnTerminal({ run: runs[0], issue, events: denialRunEvents, runId: runs[0]!.id, turnId: denialTurnId, requestId: deniedRequest?.requestId ?? "" });
         finalCheck("authoritative-provider-cleanup", settled && !processObservationError && processes.captured && processes.live.length === 0, "Exact API-bound per-turn process/start/group and observed descendants have retired");
         const finalSample = { phase: "after-cleanup", path: deniedPath, absent: await absent(deniedPath), observedAt: Date.now() };
         samples.push(finalSample);
@@ -185,12 +185,12 @@ export async function runCursorNativeFlow(input: {
         const journal = watch.finish();
         finalCheck("continuous-denial-observation", journal.complete && journal.targetMutationCount === 0, "Continuous target watcher observed no create/delete mutation and retained directory identity");
         finalCheck("complete-native-denial-boundary", Boolean(deniedRequest) && hasCursorDenialBoundary({ request: deniedRequest, expectedRequestId: deniedRequest?.requestId ?? "", expectedToolCallId: deniedRequest?.details.toolCallId ?? "", path: deniedPath, bootstrapReadProof: remoteFixture ? { actionFile: remoteFixture.actionFile, events: denialRunEvents } : undefined, samples, notices: denialNotices, runId: runs[0]?.id ?? "", turnId: denialTurnId }), "Supported native denial preserved the target through all six independent boundaries");
-        await input.evidence("cursor-native-denial-final.json", { request: deniedRequest, samples, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, cancellationProven, cancelRequestedAt, processes, processObservationError, watcher: journal, checks: cleanupChecks });
+        await input.evidence("cursor-native-denial-final.json", { request: deniedRequest, samples, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, denialTerminalProven, processes, processObservationError, watcher: journal, checks: cleanupChecks });
         if (cleanupChecks.some(row => !row.passed)) throw new Error("Cursor native denial cleanup proof is incomplete or observed an effect");
         return cleanupChecks;
       } finally {
         clearInterval(processTimer);
-        await input.evidence("cursor-native-denial-cleanup-attempt.json", { request: deniedRequest, samples, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, cancellationProven, cancelRequestedAt, processes, processObservationError, watcher: watch.finish(), checks: cleanupChecks });
+        await input.evidence("cursor-native-denial-cleanup-attempt.json", { request: deniedRequest, samples, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, denialTerminalProven, processes, processObservationError, watcher: watch.finish(), checks: cleanupChecks });
       }
     });
   }
@@ -204,7 +204,7 @@ export async function runCursorNativeFlow(input: {
       finalCheck("remote-provider-retired", runs.length === 1 && remoteBaseline !== null && snapshot.observedAtMs >= remoteBaseline.observedAtMs && hasCursorRemoteRetirement(snapshot, remoteFixture.binding), "Exact remote run PID/start/boot identity and all observed descendants retired before the retained receipt sealed");
       if (design.id === "native-write-deny-reconnect") {
         await sampleDenied("after-cleanup", snapshot);
-        finalCheck("remote-cancel-terminal", cancellationProven && runs[0]?.status === "cancelled" && issue.status === "in_progress", "Explicit native cancellation remains durable without false task completion");
+        finalCheck("remote-denial-terminal", denialTerminalProven && runs.length === 1 && hasCursorDeniedTurnTerminal({ run: runs[0], issue, events: denialRunEvents, runId: runs[0]!.id, turnId: denialTurnId, requestId: deniedRequest?.requestId ?? "" }), "Denied native turn remains failed and unfinished without false semantic success");
         finalCheck("remote-no-denied-effect", snapshot.watcher.targetMutationCount === 0 && Boolean(deniedRequest) && hasCursorDenialBoundary({ request: deniedRequest, expectedRequestId: deniedRequest?.requestId ?? "", expectedToolCallId: deniedRequest?.details.toolCallId ?? "", path: deniedPath, bootstrapReadProof: remoteFixture ? { actionFile: remoteFixture.actionFile, events: denialRunEvents } : undefined, samples, notices: denialNotices, runId: runs[0]?.id ?? "", turnId: denialTurnId }), "Exact denied native command caused no remote file effect through provider retirement");
       } else {
         if (design.id === "native-plan-reject-revise-accept") finalCheck("remote-plan-still-passive", hasCursorAcceptedPlanWait(await load()), "Accepted planning remains passive through remote retirement without an automatic follow-up run");
@@ -213,7 +213,7 @@ export async function runCursorNativeFlow(input: {
       if (cleanupChecks.some(row => !row.passed)) throw new Error("Cursor remote cleanup evidence is incomplete or observed an effect");
       return cleanupChecks;
     } finally {
-      try { await input.evidence("cursor-remote-cleanup.json", { snapshot, samples, notices: denialNotices, cancellationProven, checks: cleanupChecks }); }
+      try { await input.evidence("cursor-remote-cleanup.json", { snapshot, samples, notices: denialNotices, denialTerminalProven, checks: cleanupChecks }); }
       finally { await remoteFixture?.close(); }
     }
   });
@@ -263,8 +263,8 @@ export async function runCursorNativeFlow(input: {
   let expectedMarker = execution.task.buildVisibleMarker(nonce);
   try {
     if (!remote && design.id === "native-write-deny-reconnect") await sampleDenied("before-request");
-    await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title: execution.task.buildTitle(nonce), prompt: remote ? input.remoteBootstrap!.prompt(nonce) : execution.task.buildPrompt(nonce) + (watch ? `\nExact native shell command (copy verbatim):\n${deniedCommand!.command}` : ""), workMode: "standard", projectName: project.name });
-    issue = await pollUntil({ label: "browser-created Cursor task", deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(row => row.title === execution.task.buildTitle(nonce)), accept: Boolean }) ?? {};
+    const createdTask = await createTaskThroughUi({ page, issuePrefix: fixtures.company.issuePrefix!, agentName: fixtures.agent.name, title: execution.task.buildTitle(nonce), prompt: remote ? input.remoteBootstrap!.prompt(nonce) : execution.task.buildPrompt(nonce) + (watch ? `\nExact native shell command (copy verbatim):\n${deniedCommand!.command}` : ""), workMode: "standard", projectName: project.name, requireExplicitTitle: design.id === "native-write-deny-reconnect" });
+    issue = await pollUntil({ label: "browser-created Cursor task", deadlineAt: input.deadlineAt, load: async () => (await api.get<Row[]>(`/api/companies/${fixtures.company.id}/issues?limit=100`)).find(row => row.id === createdTask.issueId), accept: Boolean }) ?? {};
     if (!issue.id) throw new Error("Browser-created Cursor task is absent");
     if (remote) {
       const started = await pollUntil({ label: "exact Cursor bootstrap run", deadlineAt: input.deadlineAt, load, reject,
@@ -342,22 +342,25 @@ export async function runCursorNativeFlow(input: {
       await card.getByRole("button", { name: label, exact: true }).click(); const posted = (await sent).postDataJSON();
       check("browser-exact-denial", posted.turnId === event.turnId && posted.requestKind === "permission_approval" && posted.resolution?.action === "decline", "Browser denied the exact native run/request/turn");
       const identity = { runId: native.runId, turnId: event.turnId, requestId: request.requestId, method: "session/request_permission" as const, action: "decline" as const };
-      await pollUntil({ label: "native denial delivered and exact command failed", deadlineAt: input.deadlineAt, load, reject, accept: state => hasDeliveredCursorNativeRequest({ ...identity, events: state.runEvents })
-        && hasCursorDeniedCommand({ notices: denialNotices, ...identity, toolCallId: native.toolCallId, commandSha256: deniedCommand!.commandSha256, bootstrapReadProof: remoteFixture ? { actionFile: remoteFixture.actionFile, events: denialRunEvents } : undefined }) });
+      const rejectDenial = (state: Awaited<ReturnType<typeof load>>) => state.runs.length !== 1
+        || ["succeeded", "cancelled", "timed_out"].includes(state.runs[0]?.status)
+        || (state.issue.status !== "in_progress" && !(state.issue.status === "blocked" && state.runs[0]?.status === "failed" && state.runs[0]?.errorCode === "native_permission_declined"))
+        ? "Denied Cursor operation claimed success, changed task disposition, or created another run" : undefined;
+      await pollUntil({ label: "exact native denial delivery and settled call", deadlineAt: input.deadlineAt, load, reject: rejectDenial,
+        accept: state => hasDeliveredCursorNativeRequest({ ...identity, events: state.runEvents })
+          && hasCursorDeniedCommand({ notices: denialNotices, ...identity, toolCallId: native.toolCallId, commandSha256: deniedCommand!.commandSha256, bootstrapReadProof: remoteFixture ? { actionFile: remoteFixture.actionFile, events: denialRunEvents } : undefined }) });
       await sampleDenied("after-decision");
-      cancelRequestedAt = Date.now(); await api.post(`/api/heartbeat-runs/${native.runId}/cancel`);
-      const cancelled = await pollUntil({ label: "explicit native cancellation", deadlineAt: input.deadlineAt, load,
-        reject: state => state.runs.length !== 1 || ["failed", "succeeded", "timed_out"].includes(state.runs[0]?.status) ? "Cursor denial did not remain cancellable" : undefined,
-        accept: state => hasCursorCancellation({ run: state.runs[0], issue: state.issue, events: state.runEvents, runId: native.runId, turnId: event.turnId, requestedAt: cancelRequestedAt }) });
-      cancellationProven = true;
+      const terminal = await pollUntil({ label: "denied native turn remains unfinished", deadlineAt: input.deadlineAt, load, reject: rejectDenial,
+        accept: state => hasCursorDeniedTurnTerminal({ run: state.runs[0], issue: state.issue, events: state.runEvents, ...identity }) });
+      denialTerminalProven = true;
       if (remote) remoteFinal = await remoteFixture!.finish();
       await sampleDenied("after-terminal", remoteFinal ?? undefined);
-      check("negative-task-unfinished", cancelled.issue.status === "in_progress" && cancelled.runs[0]?.status === "cancelled" && cancelled.runs[0]?.runtimeMode === "native", "Native cancellation was acknowledged and the task does not falsely claim completion");
+      check("negative-task-unfinished", hasCursorDeniedTurnTerminal({ run: terminal.runs[0], issue: terminal.issue, events: terminal.runEvents, ...identity }), "Denied native turn supplied no semantic completion; its failed run does not falsely complete the task");
       await page.reload();
-      await expect(page.getByTestId("issue-detail-header").getByRole("button", { name: "Change status (current: In Progress)", exact: true })).toBeVisible();
+      await expect(page.getByTestId("issue-detail-header").getByRole("button", { name: terminal.issue.status === "blocked" ? /^Change status \(current: Blocked(?: · .+)?\)$/u : "Change status (current: In Progress)" })).toBeVisible();
       const comments = await api.get<Row[]>(`/api/issues/${issue.id}/comments`);
-      await input.evidence("api-state.json", { ...cancelled, run: runs[0], comments, checks, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, cancelRequestedAt, runEventsByRun: [{ runId: native.runId, events: cancelled.runEvents }] });
-      await input.capture("final-state", "Cursor denied command cancelled; task remains unfinished", "final-state.png");
+      await input.evidence("api-state.json", { ...terminal, run: runs[0], comments, checks, notices: denialNotices, commandSha256: deniedCommand!.commandSha256, denialTerminalProven, runEventsByRun: [{ runId: native.runId, events: terminal.runEvents }] });
+      await input.capture("final-state", "Cursor denied command ended without completing the task", "final-state.png");
       return { issue, runs, checks };
     }
     if (design.id === "native-plan-reject-revise-accept") {

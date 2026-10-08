@@ -6,6 +6,7 @@ import { WebSocketServer } from "ws";
 import { and, eq } from "drizzle-orm";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
+  costEvents,
   activityLog,
   authUsers,
   agentWakeupRequests,
@@ -103,6 +104,7 @@ async function deleteHeartbeatRunsAndWakeupsAfterActivityLogDrains(db: Db) {
     await db.delete(activityLog);
     try {
       await db.delete(heartbeatRunEvents);
+      await db.delete(costEvents);
       await db.delete(heartbeatRuns);
       await db.delete(agentWakeupRequests);
       return;
@@ -1366,10 +1368,8 @@ describeEmbeddedPostgres(
       expect(
         unmentionedComment.status,
         JSON.stringify(unmentionedComment.body),
-      ).toBe(403);
-      expect(unmentionedComment.body.details.code).toBe(
-        "issue_write_actor_class_excluded",
-      );
+      ).toBe(404);
+      expect(unmentionedComment.body).toEqual({ error: "Issue not found" });
     });
 
     it("propagates denied low-trust policy conflicts on control-plane guards", async () => {
@@ -1671,20 +1671,20 @@ describeEmbeddedPostgres(
             ),
         },
         {
-          id: "LT-26 child",
+          id: "LT-26 child with unauthorized assignee",
           req: () =>
             request(app)
               .post(`/api/issues/${fixture.issues.assignedReview.id}/children`)
-              .send({ title: `child ${fixture.canaries.issueSibling}` }),
+              .send({ title: `child ${fixture.canaries.issueSibling}`, assigneeAgentId: fixture.agents.cto.id }),
         },
         {
-          id: "LT-26 company issue",
+          id: "LT-26 company issue outside boundary",
           req: () =>
             request(app)
               .post(`/api/companies/${fixture.company.id}/issues`)
               .send({
                 title: `child ${fixture.canaries.issueSibling}`,
-                parentId: fixture.issues.assignedReview.id,
+                projectId: fixture.projects.outOfScope.id,
               }),
         },
         {
@@ -1736,7 +1736,7 @@ describeEmbeddedPostgres(
         const before = await snapshot(db);
         const res = await attempt.req();
         expect(res.status, `${attempt.id}: ${JSON.stringify(res.body)}`).toBe(
-          403,
+          ["LT approvals", "LT-15/16", "LT-19", "LT-26 child", "LT-26 child with unauthorized assignee", "LT-26 company issue", "LT-26 interaction", "LT-06 resume", "LT-06 blocker mutation"].includes(attempt.id) ? 403 : 404,
         );
         expectNoCanary(res.body, ...forbiddenMarkers);
         const after = await snapshot(db);
@@ -1879,7 +1879,7 @@ describeEmbeddedPostgres(
       for (const attempt of attempts) {
         const res = await attempt.req();
         expect(res.status, `${attempt.id}: ${JSON.stringify(res.body)}`).toBe(
-          403,
+          404,
         );
         expectNoCanary(res.body, ...forbiddenMarkers);
       }

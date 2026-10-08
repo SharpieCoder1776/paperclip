@@ -1,3 +1,4 @@
+use crate::generated_acpx_profiles::acpx_release_profile;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -54,7 +55,7 @@ pub enum PiThinkingLevel {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AcpxProviderSessionIdentity {
     pub kind: String,
     pub normalized_session_id: String,
@@ -68,9 +69,7 @@ pub struct AcpxProviderSessionIdentity {
     #[serde(default)]
     pub permission_mode: Option<AcpxPermissionMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cursor_mode: Option<CursorMode>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub pi_thinking_level: Option<PiThinkingLevel>,
+    pub mode: Option<String>,
     pub provider_lifetime_fence_candidates: [u16; 3],
 }
 
@@ -91,8 +90,7 @@ pub struct AcpxProviderSessionConfig {
     pub normalized_session_id: String,
     pub working_directory: PathBuf,
     pub permission_mode: AcpxPermissionMode,
-    pub cursor_mode: Option<CursorMode>,
-    pub pi_thinking_level: Option<PiThinkingLevel>,
+    pub mode: Option<String>,
     pub permission_mode_pinned: bool,
     pub provider_policy: Option<AcpxProviderRuntimePolicy>,
     pub system_instructions: String,
@@ -104,38 +102,14 @@ pub struct AcpxProviderSessionConfig {
 impl AcpxProviderSessionConfig {
     pub fn validate(&self) -> Result<(), LocalRunnerError> {
         self.transport.validate()?;
-        let qualified_model = match self.agent.as_str() {
-            "claude" => "claude-sonnet-5",
-            "grok" => "grok-4.7",
-            "codex" => "gpt-5.6-sol",
-            "pi" => "openrouter/deepseek/deepseek-v4-flash-0731",
-            "cursor" | "copilot" => self.model.as_str(),
-            _ => {
-                return Err(LocalRunnerError::invalid(
-                    "ACPX agent must name a known immutable profile",
-                ))
-            }
-        };
-        if self.agent != "claude" && self.agent != "grok" && self.model != qualified_model {
-            return Err(LocalRunnerError::invalid(format!(
-                "ACPX {} profile requires exact model {qualified_model}",
-                self.agent
-            )));
-        }
+        let profile = acpx_release_profile(&self.agent).ok_or_else(|| {
+            LocalRunnerError::invalid("ACPX agent must name a known immutable profile")
+        })?;
         validate_text(&self.model, MAX_MODEL_CHARS, "ACPX model")?;
-        if (self.agent == "cursor") != self.cursor_mode.is_some() {
-            return Err(LocalRunnerError::invalid(
-                "ACPX Cursor mode must be explicit for Cursor and absent for other agents",
-            ));
+        if let Some(mode) = self.mode.as_deref() {
+            validate_text(mode, MAX_ID_CHARS, "ACPX provider mode")?;
         }
-        if (self.agent == "pi") != self.pi_thinking_level.is_some() {
-            return Err(LocalRunnerError::invalid(
-                "ACPX Pi thinking level must be explicit for Pi and absent for other agents",
-            ));
-        }
-        if matches!(self.agent.as_str(), "pi" | "cursor" | "copilot")
-            && self.provider_policy.is_none()
-        {
+        if profile.requires_provider_policy && self.provider_policy.is_none() {
             return Err(LocalRunnerError::invalid(
                 "ACPX candidate requires explicit provider read-only policy",
             ));
@@ -204,8 +178,7 @@ impl AcpxProviderSessionConfig {
                 || expected_identity.requested_model != self.model
                 || expected_identity.effective_model != self.model
                 || expected_identity.permission_mode != Some(self.permission_mode)
-                || expected_identity.cursor_mode != self.cursor_mode
-                || expected_identity.pi_thinking_level != self.pi_thinking_level
+                || expected_identity.mode != self.mode
             {
                 return Err(LocalRunnerError::invalid(
                     "ACPX expected identity conflicts with the requested session",
@@ -222,6 +195,9 @@ impl AcpxProviderSessionIdentity {
             return Err(LocalRunnerError::invalid(
                 "ACPX session identity kind is invalid",
             ));
+        }
+        if let Some(mode) = self.mode.as_deref() {
+            validate_text(mode, MAX_ID_CHARS, "ACPX provider mode")?;
         }
         for (value, label) in [
             (&self.normalized_session_id, "normalized session"),
@@ -1285,11 +1261,8 @@ fn session_open_params(config: &AcpxProviderSessionConfig, sidecar_tools: &[Valu
         "tools": &sidecar_tools,
         "expectedIdentity": config.expected_identity,
     });
-    if let Some(level) = config.pi_thinking_level {
-        params["piThinkingLevel"] = json!(level);
-    }
-    if let Some(mode) = config.cursor_mode {
-        params["cursorMode"] = json!(mode);
+    if let Some(mode) = config.mode.as_deref() {
+        params["mode"] = json!(mode);
     }
     params
 }
@@ -1400,8 +1373,7 @@ fn verify_open_response(
         || identity.requested_model != config.model
         || identity.effective_model != config.model
         || identity.permission_mode != Some(config.permission_mode)
-        || identity.cursor_mode != config.cursor_mode
-        || identity.pi_thinking_level != config.pi_thinking_level
+        || identity.mode != config.mode
         || config
             .expected_identity
             .as_ref()
@@ -1626,7 +1598,7 @@ mod permission_mode_tests {
 }
 
 #[cfg(test)]
-mod provider_mode_tests {
+mod mode_tests {
     use super::*;
 
     fn config() -> AcpxProviderSessionConfig {
@@ -1647,8 +1619,7 @@ mod provider_mode_tests {
             normalized_session_id: "session-1".to_owned(),
             working_directory: std::env::temp_dir(),
             permission_mode: AcpxPermissionMode::ApproveReads,
-            cursor_mode: Some(CursorMode::Plan),
-            pi_thinking_level: None,
+            mode: Some("plan".to_owned()),
             permission_mode_pinned: true,
             provider_policy: Some(AcpxProviderRuntimePolicy { read_only: false }),
             system_instructions: String::new(),
@@ -1674,77 +1645,103 @@ mod provider_mode_tests {
             requested_model: "explicit-model".to_owned(),
             effective_model: "explicit-model".to_owned(),
             permission_mode: Some(AcpxPermissionMode::ApproveReads),
-            cursor_mode: Some(CursorMode::Plan),
-            pi_thinking_level: None,
+            mode: Some("plan".to_owned()),
             provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
         }
     }
     #[test]
-    fn cursor_mode_is_closed_and_not_defaulted_in_rust() {
-        for (name, mode) in [
-            ("agent", CursorMode::Agent),
-            ("plan", CursorMode::Plan),
-            ("ask", CursorMode::Ask),
-        ] {
-            assert_eq!(
-                serde_json::from_value::<CursorMode>(json!(name)).unwrap(),
-                mode
-            );
-            assert_eq!(serde_json::to_value(mode).unwrap(), json!(name));
-        }
-        for value in [json!("Agent"), json!("autopilot"), json!(null), json!(1)] {
-            assert!(serde_json::from_value::<CursorMode>(value).is_err());
-        }
+    fn model_is_explicit_and_provider_verified_for_every_agent() {
         let mut config = config();
-        config.validate().unwrap();
-        config.cursor_mode = None;
-        assert!(config.validate().is_err());
-        config.agent = "copilot".to_owned();
-        config.cursor_mode = Some(CursorMode::Agent);
-        assert!(config.validate().is_err());
-        config.cursor_mode = None;
-        config.validate().unwrap();
+        for agent in ["claude", "codex", "pi", "grok", "cursor", "copilot"] {
+            config.agent = agent.to_owned();
+            config.model = "custom/model[context=272k,reasoning=medium]".to_owned();
+            config.validate().unwrap();
+            assert_eq!(
+                session_open_params(&config, &[])["model"],
+                json!(config.model)
+            );
+            for invalid in [
+                "".to_owned(),
+                " ".to_owned(),
+                "x".repeat(241),
+                "model\0".to_owned(),
+            ] {
+                config.model = invalid;
+                assert!(config.validate().is_err());
+            }
+        }
     }
     #[test]
-    fn open_wire_and_identity_bind_exact_cursor_mode() {
+    fn mode_is_opaque_bounded_and_not_defaulted_in_rust() {
         let mut config = config();
-        for mode in [CursorMode::Agent, CursorMode::Plan, CursorMode::Ask] {
-            config.cursor_mode = Some(mode);
-            assert_eq!(session_open_params(&config, &[])["cursorMode"], json!(mode));
+        // Generic transport accepts ids beyond Cursor's vocabulary and leaves
+        // capability checks and native translation to the provider adapter.
+        for agent in ["cursor", "copilot"] {
+            config.agent = agent.to_owned();
+            for mode in [
+                None,
+                Some("architect".to_owned()),
+                Some("custom/build".to_owned()),
+            ] {
+                config.mode = mode;
+                config.validate().unwrap();
+            }
+        }
+        for invalid in [
+            "".to_owned(),
+            " ".to_owned(),
+            "x".repeat(241),
+            "plan\0".to_owned(),
+        ] {
+            config.mode = Some(invalid.clone());
+            assert!(config.validate().is_err());
             let mut identity = identity();
-            identity.cursor_mode = Some(mode);
+            identity.mode = Some(invalid);
+            assert!(identity.validate().is_err());
+        }
+        for invalid in [json!(1), json!({})] {
+            let mut value = serde_json::to_value(identity()).unwrap();
+            value["mode"] = invalid;
+            assert!(serde_json::from_value::<AcpxProviderSessionIdentity>(value).is_err());
+        }
+    }
+    #[test]
+    fn open_wire_and_identity_bind_exact_mode() {
+        let mut config = config();
+        for mode in [
+            "agent".to_owned(),
+            "architect".to_owned(),
+            "custom/build".to_owned(),
+        ] {
+            config.mode = Some(mode.clone());
+            assert_eq!(session_open_params(&config, &[])["mode"], json!(mode));
+            let mut identity = identity();
+            identity.mode = Some(mode.clone());
             let response = json!({"sidecarPid": 100, "status": {}, "identity": identity});
             assert_eq!(
-                verify_open_response(&response, 100, &config)
-                    .unwrap()
-                    .cursor_mode,
-                Some(mode)
+                verify_open_response(&response, 100, &config).unwrap().mode,
+                Some(mode.clone())
             );
             for wrong in [
                 None,
-                Some(CursorMode::Agent),
-                Some(CursorMode::Plan),
-                Some(CursorMode::Ask),
+                Some("agent".to_owned()),
+                Some("plan".to_owned()),
+                Some("ask".to_owned()),
             ] {
-                if wrong == Some(mode) {
+                if wrong == Some(mode.clone()) {
                     continue;
                 }
                 let mut changed = response.clone();
-                changed["identity"]["cursorMode"] = json!(wrong);
+                changed["identity"]["mode"] = json!(wrong);
                 assert!(verify_open_response(&changed, 100, &config).is_err());
             }
         }
         config.agent = "copilot".to_owned();
-        config.cursor_mode = None;
-        assert!(session_open_params(&config, &[])
-            .get("cursorMode")
-            .is_none());
+        config.mode = None;
+        assert!(session_open_params(&config, &[]).get("mode").is_none());
         let mut other = identity();
-        other.cursor_mode = None;
-        assert!(serde_json::to_value(&other)
-            .unwrap()
-            .get("cursorMode")
-            .is_none());
+        other.mode = None;
+        assert!(serde_json::to_value(&other).unwrap().get("mode").is_none());
         let response = json!({"sidecarPid": 100, "status": {}, "identity": other});
         verify_open_response(&response, 100, &config).unwrap();
     }
@@ -1754,10 +1751,10 @@ mod provider_mode_tests {
         let identity = identity();
         config.expected_identity = Some(identity.clone());
         config.validate().unwrap();
-        config.cursor_mode = Some(CursorMode::Ask);
+        config.mode = Some("ask".to_owned());
         assert!(config.validate().is_err());
         let mut changed = identity.clone();
-        changed.cursor_mode = Some(CursorMode::Agent);
+        changed.mode = Some("agent".to_owned());
         assert!(verify_suspend_response(
             &json!({"suspended": true, "identity": changed}),
             &identity

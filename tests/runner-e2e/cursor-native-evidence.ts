@@ -40,7 +40,7 @@ export function readCursorToolEvidence(rows: readonly unknown[], runId: string):
 /** Exact absolute target removes any dependency on implicit native shell cwd. */
 export function cursorDeniedCommand(path: string) {
   if (!isAbsolute(path) || /[\u0000-\u001f\u007f]/u.test(path)) throw new Error("Invalid denial target");
-  const command = `printf 'MUST_NOT_EXIST' > '${path.replaceAll("'", "'\\''")}'`;
+  const command = `printf 'MUST-NOT-EXIST' > '${path.replaceAll("'", "'\\''")}'`;
   return { command, commandSha256: `sha256:${createHash("sha256").update(command).digest("hex")}` };
 }
 export function hasCursorDeniedCommand(input: {
@@ -57,11 +57,42 @@ export function hasCursorDeniedCommand(input: {
   if (!same(request) || request.requestId !== input.requestId || !request.declineOffered) return false;
   const origins = notices.filter(row => row.stage === "tool" && row.status === "pending");
   const delivered = notices.filter(row => row.stage === "permission_delivered");
-  const failed = notices.filter(row => row.stage === "tool" && row.status === "failed");
+  // Cursor reports a denied call as completed when its transport settles. That
+  // status does not prove execution; correlated reject_once and independent
+  // continuous filesystem observation establish denial in the Product flow.
+  const settled = notices.filter(row => row.stage === "tool" && ["failed", "completed"].includes(row.status ?? ""));
   return origins.length === 1 && same(origins[0]!) && delivered.length === 1 && same(delivered[0]!)
     && delivered[0]!.requestId === input.requestId && delivered[0]!.outcome === "reject_once"
-    && failed.length === 1 && same(failed[0]!) && origins[0]!.seq < request.seq && request.seq < delivered[0]!.seq && delivered[0]!.seq < failed[0]!.seq
-    && notices.every(row => same(row) && row.status !== "completed");
+    && settled.length === 1 && same(settled[0]!) && origins[0]!.seq < request.seq && request.seq < delivered[0]!.seq && delivered[0]!.seq < settled[0]!.seq
+    && notices.every(row => same(row));
+}
+
+/** A denied native turn may end without semantic completion. Never qualify
+ * that as task success or as an acknowledged operator cancellation. */
+export function hasCursorDeniedTurnTerminal(input: {
+  run: unknown; issue: unknown; events: readonly unknown[]; runId: string; turnId: string; requestId: string;
+}): boolean {
+  const run = rec(input.run), issue = rec(input.issue);
+  const missingResult = run.errorCode === "native_session_interrupted" && run.error === "native_finalization_missing: session returned no semantic result";
+  const declined = run.errorCode === "native_permission_declined" && [
+    "native_finalization_missing: session returned no semantic result; provider permission was declined; explicit direction is required",
+    // Retained results from before the provider lifecycle boundary cleanup.
+    "native_finalization_missing: session returned no semantic result; Cursor permission was declined; explicit direction is required",
+  ].includes(run.error);
+  if (!id(input.runId) || !id(input.turnId) || !id(input.requestId) || run.id !== input.runId || run.nativeIssueId !== issue.id
+    || run.status !== "failed" || run.runtimeMode !== "native" || issue.status !== (declined ? "blocked" : "in_progress")
+    || (!missingResult && !declined)) return false;
+  const terminals = input.events.map(rec).map(row => ({ row, event: rec(rec(row.payload).prpEvent) }))
+    .filter(({ event }) => ["turn.completed", "turn.failed", "turn.cancelled", "turn.interrupted"].includes(event.eventType));
+  const delivered = readCursorToolEvidence(input.events, input.runId).filter(notice => notice.stage === "permission_delivered"
+    && notice.turnId === input.turnId && notice.requestId === input.requestId && notice.outcome === "reject_once");
+  if (terminals.length !== 1 || delivered.length !== 1) return false;
+  const { row, event } = terminals[0]!;
+  return row.runId === input.runId && row.eventType === event.eventType && event.runId === input.runId && event.turnId === input.turnId
+    && event.eventType === "turn.completed" && event.schema === "paperclip.prp.event.v1" && event.schemaVersion === 1
+    && row.protocolSchemaVersion === 1 && event.sourceKind === "runner" && rec(event.payload).status === "completed"
+    && rec(event.payload).error === null && Number.isSafeInteger(row.seq) && row.seq > delivered[0]!.seq
+    && Number.isFinite(Date.parse(event.emittedAt));
 }
 
 export function hasCursorCancellation(input: { run: unknown; issue: unknown; events: readonly unknown[]; runId: string; turnId: string; requestedAt: number }): boolean {
