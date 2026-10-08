@@ -1,11 +1,12 @@
+import { readFile } from "node:fs/promises";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import express from "express";
 import request from "supertest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import { createDb, authUsers, companies, companyMemberships, agents, dotAgentBindings, mcpOauthGrants, mcpOauthRequests } from "@paperclipai/db";
+import { createDb, authUsers, companies, companyMemberships, agents, dotAgentBindings, mcpOauthGrants, mcpOauthRequests, mcpOauthTokens } from "@paperclipai/db";
 import { startEmbeddedPostgresTestDatabase } from "./helpers/embedded-postgres.js";
-import { createPublicMcpOAuth, publicMcpConfig, DEVICE_GRANT } from "../services/public-mcp/oauth.js";
+import { createPublicMcpOAuth, publicMcpConfig, hashMcpSecret, DEVICE_GRANT } from "../services/public-mcp/oauth.js";
 import { instanceSettingsService } from "../services/instance-settings.js";
 import { dotRunnerBroker } from "../services/dot-runner-broker.js";
 import { publicMcpManagementRoutes, publicMcpIngressRoutes } from "../routes/public-mcp.js";
@@ -37,6 +38,59 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     const id = await begin();
     return { userId, company: company!, agent: agent!, oauth, client, verifier, input, pairing, id, begin };
   }
+  async function connect(f: Awaited<ReturnType<typeof fixture>>) {
+    const consent = await f.oauth.consentDotPairing(f.id, f.pairing.pairingCode);
+    return f.oauth.token({ grant_type: "authorization_code", client_id: f.client.client_id,
+      redirect_uri: callback, resource: config.resource, code: new URL(consent.redirectUrl).searchParams.get("code"), code_verifier: f.verifier });
+  }
+  it("refreshes a Dot connection after years of inactivity, still rotates and revokes on replay", async () => {
+    const f = await fixture();
+    const tokens = await connect(f);
+    const [stored] = await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.tokenHash, hashMcpSecret(tokens.refresh_token!)));
+    expect(stored!.expiresAt).toBeNull();
+    const refresh = { grant_type: "refresh_token", client_id: f.client.client_id, resource: config.resource, refresh_token: tokens.refresh_token };
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(Date.now() + 2 * 365 * 24 * 60 * 60_000));
+      await expect(f.oauth.authenticate(tokens.access_token)).rejects.toThrow();
+      const next = await f.oauth.token(refresh);
+      expect(next.refresh_token).not.toBe(tokens.refresh_token);
+      expect(next.expires_in).toBe(900);
+      expect((await f.oauth.authenticate(next.access_token)).actor).toMatchObject({ type: "agent", agentId: f.agent.id });
+      const [rotated] = await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.tokenHash, hashMcpSecret(next.refresh_token!)));
+      expect(rotated!.expiresAt).toBeNull();
+      await expect(f.oauth.token(refresh)).rejects.toThrow();
+      await expect(f.oauth.authenticate(next.access_token)).rejects.toThrow();
+      expect(await dotRunnerBroker(db).bindingForAgent(f.company.id, f.agent.id)).toBeNull();
+    } finally { vi.useRealTimers(); }
+  });
+  it("upgrades existing Dot refresh tokens without changing personal or revoked grants", async () => {
+    const f = await fixture();
+    const tokens = await connect(f);
+    const grant = (await f.oauth.authenticate(tokens.access_token)).grant;
+    const expired = new Date(0);
+    await db.update(mcpOauthTokens).set({ expiresAt: expired }).where(eq(mcpOauthTokens.tokenHash, hashMcpSecret(tokens.refresh_token!)));
+    const personalId = randomUUID();
+    const revokedId = randomUUID();
+    await db.insert(mcpOauthGrants).values([
+      { ...grant, id: personalId, purpose: "personal", agentId: null, resource: config.origin + "/mcp/paperclip" },
+      { ...grant, id: revokedId, revokedAt: new Date() },
+    ]);
+    await db.insert(mcpOauthTokens).values([
+      { grantId: personalId, tokenHash: randomUUID(), kind: "refresh", expiresAt: expired },
+      { grantId: revokedId, tokenHash: randomUUID(), kind: "refresh", expiresAt: expired },
+    ]);
+    const migration = await readFile(new URL("../../../packages/db/src/migrations/0319_heavy_captain_midlands.sql", import.meta.url), "utf8");
+    for (const statement of migration.split("--> statement-breakpoint")) await db.execute(sql.raw(statement));
+    const [personal] = await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId, personalId));
+    const [revoked] = await db.select().from(mcpOauthTokens).where(eq(mcpOauthTokens.grantId, revokedId));
+    expect(personal!.expiresAt).toEqual(expired);
+    expect(revoked!.expiresAt).toEqual(expired);
+    const next = await f.oauth.token({ grant_type: "refresh_token", client_id: f.client.client_id, resource: config.resource, refresh_token: tokens.refresh_token });
+    expect((await f.oauth.authenticate(next.access_token)).actor).toMatchObject({ type: "agent", agentId: f.agent.id });
+    await f.oauth.revokeToken(next.access_token, f.client.client_id);
+    await expect(f.oauth.token({ grant_type: "refresh_token", client_id: f.client.client_id, resource: config.resource, refresh_token: next.refresh_token })).rejects.toThrow();
+  });
   it("pins browser ingress without changing the issuer, resource or token endpoint", async () => {
     const browserOrigin = "https://paperclip-browser.example:10000";
     const f = await fixture(browserOrigin);
@@ -75,6 +129,7 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     expect((await request(app).post(path).send({ pairingCode: f.pairing.pairingCode })).status).toBe(403);
     const preview = await request(app).post(path + "/preview").set("Origin", config.origin).send({ pairingCode: f.pairing.pairingCode });
     expect(preview.status).toBe(200);
+    expect(preview.body.accessDuration).toBe("Ongoing until revoked. This connection does not expire from inactivity.");
     expect(preview.body).toMatchObject({ company: { id: f.company.id, name: f.company.name }, agent: { id: f.agent.id, name: f.agent.name } });
     expect(JSON.stringify(preview.body)).not.toContain(f.pairing.pairingCode);
     expect(await db.select().from(mcpOauthGrants).where(eq(mcpOauthGrants.userId, f.userId))).toHaveLength(0);

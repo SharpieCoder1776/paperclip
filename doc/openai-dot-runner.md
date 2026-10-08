@@ -48,6 +48,16 @@ controller deployments are not qualified. The feature is off by default.
 Only the operator's one-use pairing code is displayed. OAuth tokens and callback
 signing secrets stay on the server and never enter the Runner descriptor,
 task prompt or saved adapter config. Pairing codes expire after 15 minutes.
+Once paired, the connection has no Paperclip inactivity expiry, including existing
+connections upgraded by migration `0319_heavy_captain_midlands.sql`. Access tokens
+still last 15 minutes and are renewed with rotating, non-expiring refresh tokens;
+revocation, replay detection, and current company/agent permissions still apply.
+This does not control any independent OpenAI-side connection policy.
+
+In **Invite an external agent → Dot**, the prompt preview closes automatically
+as soon as Paperclip observes the connection. The footer shows **Connecting…**
+while Dot subscribes, then **Confirming connection…** during the event check.
+After the round trip succeeds, **Done** closes the invitation dialog.
 
 The dedicated connection uses the merged MCP gateway's PKCE browser and device
 flows, including verified client metadata documents and organization hints.
