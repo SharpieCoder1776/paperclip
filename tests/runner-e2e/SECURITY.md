@@ -361,3 +361,8 @@ fixture answer that must be rejected. Retained evidence uses the existing
 sanitizer and screenshot publication gates. The cell reuses the selected key
 allocation and captured bounded budgets, with zero automatic retries. It neither creates
 remote resources nor grants permission to use another secret.
+
+The expired native question must retain its versioned cancellation receipt with
+zero answers, bound to the original payload, card, company, task and source run.
+A missing result, answer actor, changed payload or submitted answer fails the
+oracle. Correcting this assertion does not regrade historical failed campaigns.

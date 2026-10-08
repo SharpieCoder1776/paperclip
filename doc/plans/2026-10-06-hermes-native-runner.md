@@ -1527,3 +1527,35 @@ and 2,035 Product E2E support tests with one platform skip. Product E2E TypeScri
 also passes. A fresh committed-source browser Stop, current-head cloud checks,
 and the remaining release matrix are still required. No local Docker or Rust
 build was used, and no unknown-cost hold was released.
+
+### 2026-10-08 live billing and persisted cancellation receipt
+
+The current-source `a14a752ec8` local Stop attempt retains its original
+failed/cleanup-failed grade after 301.128 seconds. The wire repair now delivers
+complete provider-reported billing: $0.000973314, 31,673 input tokens and 315
+output tokens. Public read-only observations confirm the cancelled run, exact
+audited Stop acknowledgement, expired question and unfinished task. All seven
+observed owned process identities retire. Evidence has no leaks or missing
+entries, and the failure screenshot was inspected. Earlier unknown-cost holds
+remain reserved; this measurement is recorded with its known charge.
+
+The remaining wait is an oracle error: the browser fixture requires the expired
+card's result to be absent, but native cancellation correctly persists a v1
+cancellation receipt with zero answers. Offline analysis of the captured public
+state passes the exact native cancellation predicate and rejects only that old
+card predicate. The failed campaign is not regraded or replayed as a live pass.
+
+The corrected card oracle requires the original payload, company, task and run
+binding; the same card must expire under the owning run, retain no human or
+agent answer actor, and contain the exact cancellation receipt with no answers.
+The regression first fails the real receipt and incorrectly accepts a missing
+receipt. The corrected source passes all 2,057 Product E2E support tests with one
+platform skip, 128 native source checks and Product E2E TypeScript. The restricted
+full-suite attempt retains its IPC/process-permission failures; the host-access
+run passes. Post-hoc comparison passes the corrected oracle on the captured state
+without changing the original grade or making any provider call.
+
+Affected definitions advance to native version 8, API/Bedrock version 4 and
+extended version 5. Production runtime, dependency locks and execution controls
+do not change for this oracle repair. Fresh committed-source browser acceptance
+and current-head cloud checks remain required. Hermes is still pending.

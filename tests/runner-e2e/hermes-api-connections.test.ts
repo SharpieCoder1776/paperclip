@@ -3,7 +3,7 @@ import { runnerMatrix, runnerSuites, suiteDefinitionHash } from "./catalog.js";
 import { buildMatrixJobs, parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
 import { buildRunnerE2EProcessEnvironment } from "./harness-env.js";
 import { explicitlyRequestsFileOutput, explicitlyRequestsTaskDocumentOutput } from "../../server/src/services/native-runtime/native-deliverable-feedback.js";
-import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesOpenRouterWorkflow, isHermesConnectionSuite, HERMES_NATIVE_INTERACTION_SUITE, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, hasHermesNativeQuestionStop, resolveHermesQualificationBudgetCents } from "./hermes-api-connections.js";
+import { captureHermesApiAccountOwner, captureHermesApiBudgets, captureHermesOpenRouterSettlement, gradeHermesApiConnection, isHermesOpenRouterWorkflow, isHermesConnectionSuite, HERMES_NATIVE_INTERACTION_SUITE, hasExactHermesNativeQuestionResponse, hasHermesNativeQuestionBatch, hermesNativeAnswerText, hasHermesNativeQuestionStop, hasHermesNativeQuestionStopCard, resolveHermesQualificationBudgetCents } from "./hermes-api-connections.js";
 
 const settings = vi.hoisted(() => ({ contents: undefined as string | undefined }));
 vi.mock("node:fs", async importOriginal => {
@@ -84,6 +84,43 @@ describe("Hermes native browser questions", () => {
   };
   it("requires the native callback cancellation and exact browser-owned Stop acknowledgement", () => {
     expect(hasHermesNativeQuestionStop(stopped())).toBe(true);
+  });
+  const stoppedCard = () => {
+    const originalCard = { id: "card", companyId: "company", issueId: "task", sourceRunId: "run", kind: "ask_user_questions",
+      continuationPolicy: "none", status: "pending", result: null, payload: { version: 1, runtimeRequestId: "request", questionSet } };
+    return { originalCard, runId: "run", card: { ...structuredClone(originalCard), status: "expired", resolvedByRunId: "run",
+      resolvedByUserId: null, resolvedByAgentId: null,
+      result: { version: 1, cancelled: true, cancellationReason: "Native question cancelled", answers: [], summaryMarkdown: null } } };
+  };
+  it("accepts the persisted native cancellation receipt with no submitted answers", () => {
+    expect(hasHermesNativeQuestionStopCard(stoppedCard())).toBe(true);
+  });
+  it.each(["missing-receipt", "answered", "not-cancelled", "wrong-version", "wrong-reason", "summary", "foreign-card", "foreign-company",
+    "foreign-task", "foreign-source-run", "foreign-resolver-run", "resolved-by-user", "resolved-by-agent", "changed-payload", "wrong-status",
+    "wrong-kind", "continuation", "original-answered", "original-expired", "missing-request", "wrong-run"])("rejects stopped card fault: %s", fault => {
+    const value = stoppedCard() as Record<string, any>;
+    if (fault === "missing-receipt") value.card.result = null;
+    if (fault === "answered") value.card.result.answers = [{ questionId: "q0", optionIds: ["o0"] }];
+    if (fault === "not-cancelled") value.card.result.cancelled = false;
+    if (fault === "wrong-version") value.card.result.version = 2;
+    if (fault === "wrong-reason") value.card.result.cancellationReason = "Another cancellation";
+    if (fault === "summary") value.card.result.summaryMarkdown = "An answer";
+    if (fault === "foreign-card") value.card.id = "other-card";
+    if (fault === "foreign-company") value.card.companyId = "other-company";
+    if (fault === "foreign-task") value.card.issueId = "other-task";
+    if (fault === "foreign-source-run") value.card.sourceRunId = "other-run";
+    if (fault === "foreign-resolver-run") value.card.resolvedByRunId = "other-run";
+    if (fault === "resolved-by-user") value.card.resolvedByUserId = "human";
+    if (fault === "resolved-by-agent") value.card.resolvedByAgentId = "agent";
+    if (fault === "changed-payload") value.card.payload.runtimeRequestId = "other-request";
+    if (fault === "wrong-status") value.card.status = "answered";
+    if (fault === "wrong-kind") value.card.kind = "request_confirmation";
+    if (fault === "continuation") value.card.continuationPolicy = "resume_task";
+    if (fault === "original-answered") value.originalCard.result = { answers: [{ questionId: "q0", optionIds: ["o0"] }] };
+    if (fault === "original-expired") value.originalCard.status = "expired";
+    if (fault === "missing-request") { delete value.originalCard.payload.runtimeRequestId; delete value.card.payload.runtimeRequestId; }
+    if (fault === "wrong-run") value.runId = "other-run";
+    expect(hasHermesNativeQuestionStopCard(value as Parameters<typeof hasHermesNativeQuestionStopCard>[0])).toBe(false);
   });
   it.each(["missing-created", "missing-closure", "missing-terminal", "duplicate-created", "duplicate-closure", "duplicate-terminal", "second-request",
     "completed", "failed", "interrupted", "resolved", "expired", "answer", "replay", "wrong-action", "wrong-order", "wrong-schema", "wrong-version", "wrong-protocol",

@@ -201,6 +201,21 @@ export function hasHermesNativeQuestionStop(input: {
     && browser.id === run.id && record(record(browser.resultJson).nativeCancellation).intentId === stop.intentId;
 }
 
+/** Bind the terminal question card to the retained unanswered native request. */
+export function hasHermesNativeQuestionStopCard(input: { card: unknown; originalCard: unknown; runId: string }): boolean {
+  const card = record(input.card), original = record(input.originalCard);
+  return [input.runId, original.id, original.companyId, original.issueId].every(present)
+    && original.sourceRunId === input.runId && original.status === "pending" && !original.result
+    && original.kind === "ask_user_questions" && original.continuationPolicy === "none"
+    && ["id", "companyId", "issueId", "sourceRunId", "kind", "continuationPolicy"].every(key => card[key] === original[key])
+    && card.status === "expired" && card.resolvedByRunId === input.runId
+    && card.resolvedByUserId === null && card.resolvedByAgentId === null
+    && present(record(original.payload).runtimeRequestId) && isDeepStrictEqual(card.payload, original.payload)
+    && isDeepStrictEqual(card.result, {
+      version: 1, cancelled: true, cancellationReason: "Native question cancelled", answers: [], summaryMarkdown: null,
+    });
+}
+
 /** The browser owns Stop; public receipts and read-only OS observations grade it. */
 export async function runHermesNativeQuestionStop(input: {
   page: Page; api: RunnerApi; fixtures: LiveFixtureValues; execution: MatrixExecution; nonce: string;
@@ -242,7 +257,7 @@ export async function runHermesNativeQuestionStop(input: {
     return { run, issue, events, interactions };
   };
   let identity: Omit<Parameters<typeof hasHermesNativeQuestionStop>[0], "events" | "run" | "issue"> | undefined;
-  let interactionId: string | undefined;
+  let originalCard: unknown;
   const retired = () => processes.captured && processes.journal.length >= 2 && processes.live.length === 0 && !processIdentityChanged;
   input.registerCleanupAssertion(async () => {
     try {
@@ -252,7 +267,7 @@ export async function runHermesNativeQuestionStop(input: {
           load: async () => { sample(); return processes; }, accept: retired });
       }
       const passed = complete && retired() && runs.length === 1 && state.interactions.length === 1
-        && state.interactions[0]?.id === interactionId && state.interactions[0]?.status === "expired"
+        && hasHermesNativeQuestionStopCard({ card: state.interactions[0], originalCard, runId: identity?.runId ?? "" })
         && Boolean(identity && hasHermesNativeQuestionStop({ ...identity, ...state }));
       await input.evidence("hermes-native-stop-cleanup.json", { complete, processes, processIdentityChanged, passed });
       return [{ id: "hermes-native-stop-retired-through-cleanup", passed, detail: "The exact per-turn owner and observed descendants remain retired; no late answer or follow-up appears." }];
@@ -280,7 +295,7 @@ export async function runHermesNativeQuestionStop(input: {
     && isDeepStrictEqual(request.input, questionSet) && request.requestId === card.payload?.runtimeRequestId
     && card.sourceRunId === pending.run.id && card.continuationPolicy === "none" && !card.result
     && !record(pending.run.resultJson).nativeCancellation, "One complete native callback remains unanswered in its original active turn before Stop.");
-  interactionId = card.id;
+  originalCard = card;
   await input.evidence("hermes-native-stop-pending.json", { card, event: pendingEvent, processes, checks });
   await page.goto(`/${fixtures.company.issuePrefix}/issues/${issue.identifier ?? issue.id}`);
   await page.getByRole("radio", { name: questionSet.questions[0].options[0].label, exact: true }).last().waitFor({ state: "visible" });
@@ -303,8 +318,9 @@ export async function runHermesNativeQuestionStop(input: {
   await input.evidence("hermes-native-stop-browser-response.json", { identity, checks });
   const stopped = await pollUntil({ label: "Hermes native question cancellation and owned Stop acknowledgement", deadlineAt, intervalMs: 200, load,
     reject: state => ["succeeded", "failed", "timed_out"].includes(state.run.status) ? "Stop did not produce a cancelled native turn" : undefined,
-    accept: state => state.interactions.length === 1 && state.interactions[0]?.id === card.id && state.interactions[0]?.status === "expired"
-      && !state.interactions[0]?.result && hasHermesNativeQuestionStop({ ...identity!, ...state }),
+    accept: state => state.interactions.length === 1
+      && hasHermesNativeQuestionStopCard({ card: state.interactions[0], originalCard, runId: identity!.runId })
+      && hasHermesNativeQuestionStop({ ...identity!, ...state }),
   });
   check("exact-native-cancellation", hasHermesNativeQuestionStop({ ...identity, ...stopped }),
     "One ordered cancellation closes the retained native request and turn, with the browser's exact audited run Stop acknowledgement.");
@@ -329,7 +345,7 @@ export async function runHermesNativeQuestionStop(input: {
     "The loaded cancelled turn offers no native question answer control.");
   const final = await load();
   check("one-unfinished-cancelled-run", runs.length === 1 && final.run.status === "cancelled" && final.issue.status === "in_progress"
-    && final.interactions.length === 1 && final.interactions[0]?.status === "expired" && !final.interactions[0]?.result
+    && final.interactions.length === 1 && hasHermesNativeQuestionStopCard({ card: final.interactions[0], originalCard, runId: identity.runId })
     && hasHermesNativeQuestionStop({ ...identity, ...final }), "Stop leaves one unfinished task and one cancelled run, without an answer or follow-up.");
   const connectionChecks = gradeHermesApiConnection({ companyId: fixtures.company.id, agentId: fixtures.agent.id,
     issueId: issue.id, connectionId: fixtures.aiConnection.connectionId, provider: fixtures.aiConnection.binding.provider,

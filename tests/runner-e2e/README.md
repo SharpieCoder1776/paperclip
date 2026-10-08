@@ -1495,9 +1495,10 @@ credentials or other file settings. The campaign captures one immutable value
 for fixture creation, public budget readback, settlement health, and catalog
 definition identity. Every
 observed budget must match it exactly. A lower cap does not settle unknown
-charges or release a previous attempt's reservation. Definition versions 4
-(extended harnesses), 3 (Hermes API/Bedrock), and 7 (native interactions) record
-this bounded option and consistent settings capture. Native answer receipts
+charges or release a previous attempt's reservation. Definition versions 5
+(extended harnesses), 4 (Hermes API/Bedrock), and 8 (native interactions) record
+this bounded option, consistent settings capture and the Stop card receipt.
+Native answer receipts
 must also retain the original runner and normalized session identities.
 
 The credential-free native Stop fixture checks usage provenance on its durable
@@ -1505,6 +1506,12 @@ PRP carrier before the cancelled terminal, including runner, session, run and
 turn identity. Informational notices are not part of the normalized lifecycle
 stream. This transport proof does not replace a paid browser campaign's charge
 settlement or process-cleanup checks.
+
+Native Stop leaves a versioned cancellation result on the expired question,
+with zero submitted answers. The browser fixture requires that exact receipt,
+the original card payload and company/task/run identity, and native cancellation
+evidence. A missing result or a result containing answers cannot pass. Historical
+failed campaigns keep their original machine grades after this oracle repair.
 
 Before loading local credentials, the launcher records the checked-out controller
 SHA and ref for every selected Hermes candidate, including API and Bedrock cells.
