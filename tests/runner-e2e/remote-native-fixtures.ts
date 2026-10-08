@@ -1,9 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
-import { watch, lstatSync, readFileSync } from "node:fs";
+import { watch, lstatSync } from "node:fs";
 import { posix } from "node:path";
-
-import { PI_DISTRIBUTION_CLOSURE_SHA256 } from "../../packages/paperclip-runner/src/drivers/acpx/pi-closure-pins.js";
-const PI_FAULT_SOURCE = readFileSync(new URL("./pi-provider-fault.py", import.meta.url), "utf8");
 
 export const REMOTE_FIXTURE_DAYTONA_SDK_VERSION = "0.203.0";
 const NODE = "/opt/paperclip-runner/provider-pack/node_modules/node/bin/node";
@@ -33,8 +30,8 @@ function relative(value: string): string {
 }
 // Only closed diagnostic enums cross the remote boundary; SDK errors and output
 // are never retained. These diagnostics explain failed evidence, not qualification.
-const RPC_PHASES = ["runtime-ready", "install", "wait", "close", "arm", "publish", "snapshot", "attached", "read", "pi-provider-death"] as const;
-const RPC_CODES = ["node_identity", "sentinel_type", "sentinel", "cwd", "runtime_root_identity", "runtime_binary_identity", "proc_bound", "ambiguous_run_root", "runtime_not_ready", "runtime_identity_changed", "invalid_proc_identity", "invalid_proc_fields", "socket_error", "socket_timeout", "output_bound", "rpc_deadline", "remote_unknown", "transport_failure", "invalid_response", "readiness_deadline", "pi_provider_identity_or_signal_failed"] as const;
+const RPC_PHASES = ["runtime-ready", "install", "wait", "close", "arm", "publish", "snapshot", "attached", "read", "inject-loss"] as const;
+const RPC_CODES = ["node_identity", "sentinel_type", "sentinel", "cwd", "runtime_root_identity", "runtime_binary_identity", "proc_bound", "ambiguous_run_root", "runtime_not_ready", "runtime_identity_changed", "invalid_proc_identity", "invalid_proc_fields", "socket_error", "socket_timeout", "output_bound", "rpc_deadline", "remote_unknown", "transport_failure", "invalid_response", "readiness_deadline", "terminal_evidence_incomplete"] as const;
 type RpcPhase = typeof RPC_PHASES[number];
 type RpcCode = typeof RPC_CODES[number];
 interface RpcDiagnostic { phase: RpcPhase; code: RpcCode }
@@ -124,24 +121,25 @@ export function createRemoteTargetWatch(directory: string, name: string, io = { 
 const OBSERVER = String.raw`
 const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),net=require('node:net'),cp=require('node:child_process');
 const config=JSON.parse(Buffer.from(process.argv[2],'base64').toString());
-const parseStat=PARSE_STAT;const runRoot=RUN_ROOT;const watchTarget=WATCH_TARGET;const PI_FAULT_SOURCE=PI_FAULT_PROGRAM,PI_CLOSURE_PIN=PI_CLOSURE_DIGEST;
+const parseStat=PARSE_STAT;const runRoot=RUN_ROOT;const watchTarget=WATCH_TARGET;
 const hash=x=>'sha256:'+crypto.createHash('sha256').update(x).digest('hex');
 const cwdStat=fs.lstatSync(config.binding.remoteCwd,{bigint:true}),rootStat=fs.lstatSync(config.root,{bigint:true}),scriptStat=fs.lstatSync(__filename,{bigint:true}),scriptHash=hash(fs.readFileSync(__filename));
 const runtimeRoot=path.join(config.binding.remoteCwd,config.runtimeRelative),runtimeStat=fs.lstatSync(runtimeRoot,{bigint:true});if(!runtimeStat.isDirectory()||runtimeStat.isSymbolicLink()||fs.realpathSync(runtimeRoot)!==runtimeRoot)throw Error('runtime_root_identity');let observedPrpEnvironmentLeaseId=null;
 const boot=fs.readFileSync('/proc/sys/kernel/random/boot_id','utf8').trim();
 const targets=new Map();let complete=true,sealed=false,root=null,attached=null,child=null,client=null,childTimer=null;
-const journal=new Map(),sockets=new Set(),waiters=new Set(),armWaiters=new Set();let observedRootCount=0,publishedHash=null,finalReceipt=null,retiring=false,piFaultAttempted=false;
+const journal=new Map(),sockets=new Set(),waiters=new Set(),armWaiters=new Set(),failureCodes=new Set();let observedRootCount=0,publishedHash=null,finalReceipt=null,retiring=false;
+function incomplete(code){complete=false;failureCodes.add(code)}
 function identity(pid){return parseStat(pid,fs.readFileSync('/proc/'+pid+'/stat','utf8'),boot)}
 function table(){const ids=fs.readdirSync('/proc').filter(x=>/^\d+$/.test(x)&&Number(x)>1);if(ids.length>4096)throw Error('process_bound');return ids.flatMap(x=>{try{return [identity(Number(x))]}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH')return [];throw e}})}
 function sample(){
  const all=table();const candidates=[];
  for(const p of all){if(p.state==='Z')continue;let argv;try{argv=fs.readFileSync('/proc/'+p.pid+'/cmdline').toString().split('\0').filter(Boolean)}catch(e){if(e.code==='ENOENT'||e.code==='ESRCH')continue;throw e}
   if(runRoot(argv,config.binding.runId,p)){const at=argv.indexOf('--environment-lease-id'),stateAt=argv.indexOf('--state-dir');if(at<1||argv.lastIndexOf('--environment-lease-id')!==at||!/^[-a-zA-Z0-9._:]{1,256}$/.test(argv[at+1]??''))throw Error('process_prp_identity_shape');if(argv[0]!==path.join(runtimeRoot,'bin','paperclip-runnerd')||stateAt<1||argv.lastIndexOf('--state-dir')!==stateAt||!argv[stateAt+1]?.startsWith(runtimeRoot+'/sessions/')||!/^([a-f0-9]{64})\/runner$/.test(argv[stateAt+1].slice((runtimeRoot+'/sessions/').length)))throw Error('process_runtime_binding');if(observedPrpEnvironmentLeaseId!==null&&observedPrpEnvironmentLeaseId!==argv[at+1])throw Error('process_prp_identity_changed');observedPrpEnvironmentLeaseId=argv[at+1];candidates.push(p);}}
- if(candidates.length>1)complete=false;
+ if(candidates.length>1)incomplete('ambiguous_run_root');
  if(!root&&candidates.length===1){if(hash(fs.readFileSync('/proc/'+candidates[0].pid+'/exe'))!==config.runnerdSha256)throw Error('runner_binary_identity');root=candidates[0];journal.set(root.pid,root);observedRootCount++;}
- if(root&&candidates.some(p=>p.pid!==root.pid||p.startTicks!==root.startTicks))complete=false;
+ if(root&&candidates.some(p=>p.pid!==root.pid||p.startTicks!==root.startTicks))incomplete('run_root_changed');
  let changed=true;while(changed){changed=false;for(const p of all){const parent=journal.get(p.ppid);if(!journal.has(p.pid)&&((parent&&all.some(q=>q.pid===parent.pid&&q.startTicks===parent.startTicks))||(root&&p.group===root.pid))){if(journal.size>=512)throw Error('journal_bound');journal.set(p.pid,p);changed=true;}}}
- if(all.some(p=>journal.has(p.pid)&&journal.get(p.pid).startTicks!==p.startTicks))complete=false;
+ if(all.some(p=>journal.has(p.pid)&&journal.get(p.pid).startTicks!==p.startTicks))incomplete('process_pid_reused');
  const live=all.filter(p=>journal.get(p.pid)?.startTicks===p.startTicks&&p.state!=='Z').map(p=>p.pid);
  if(client&&!all.some(p=>p.pid===client.pid&&p.startTicks===client.startTicks&&p.state!=='Z')&&attached&&!attached.clientExitedAtMs){attached.clientExitedAtMs=Date.now();attached.clientExitedMonotonicNs=process.hrtime.bigint().toString();}
  return {captured:root!==null,root,journal:[...journal.values()],live};
@@ -152,30 +150,23 @@ function guard(){const rs=fs.lstatSync(runtimeRoot,{bigint:true});if(!rs.isDirec
 function readSafe(p){const fd=fs.openSync(p,fs.constants.O_RDONLY|fs.constants.O_NOFOLLOW);try{const before=fs.fstatSync(fd,{bigint:true});if(!before.isFile()||before.size>65536n)throw Error('file_bound_or_type');const bytes=fs.readFileSync(fd),after=fs.fstatSync(fd,{bigint:true}),named=fs.lstatSync(p,{bigint:true});if(before.dev!==named.dev||before.ino!==named.ino||named.isSymbolicLink()||before.size!==after.size||before.mtimeNs!==after.mtimeNs||BigInt(bytes.length)!==before.size)throw Error('file_changed');return bytes}finally{fs.closeSync(fd)}}
 function file(p){try{const s=fs.lstatSync(p);if(s.isSymbolicLink()||!s.isFile()||s.size>65536)throw Error('file_bound_or_type');return {absent:false,sha256:hash(readSafe(p))}}catch(e){if(e.code==='ENOENT')return {absent:true,sha256:null};throw e}}
 function workspace(){const result={};let count=0,bytes=0;function visit(dir,prefix){for(const name of fs.readdirSync(dir).sort()){if(++count>512)throw Error('workspace_entry_bound');const full=path.join(dir,name),rel=prefix+name,s=fs.lstatSync(full);if(rel===config.runtimeRelative)continue;if(rel===config.actionFile){if(!publishedHash||file(full).sha256!==publishedHash)throw Error('setup_file_changed');continue;}if(s.isSymbolicLink())throw Error('workspace_symlink');if(s.isDirectory()){result[rel]='directory';visit(full,rel+'/')}else if(s.isFile()){bytes+=s.size;if(s.size>65536||bytes>4194304)throw Error('workspace_byte_bound');result[rel]=hash(readSafe(full))}else throw Error('workspace_special_file')}}visit(config.binding.remoteCwd,'');return result}
-function snapshot(){guard();verifyWorkspaceWatchRoots();const processes=sample(),out={};let watchComplete=complete,total=0;for(const [name,t] of targets){const status=t.watch.snapshot();out[name]={...file(t.path),...status};watchComplete&&=status.complete;total+=status.mutationCount}return {binding:config.binding,observedAtMs:Date.now(),observedMonotonicNs:process.hrtime.bigint().toString(),complete:complete&&watchComplete,workspace:workspace(),targets:out,watcher:{complete:watchComplete,targetMutationCount:total,workspaceMutationCount},processes,scope:{kind:'user_workspace',excludedRuntime:{relativePath:config.runtimeRelative,absolutePath:runtimeRoot,dev:String(runtimeStat.dev),ino:String(runtimeStat.ino),runnerExecutableSha256:config.runnerdSha256},observedPrpEnvironmentLeaseId,prpEnvironmentLeaseIdVerified:false},setup:{path:config.actionFile,sha256:publishedHash,published:publishedHash!==null},attached}}
+function snapshot(){guard();verifyWorkspaceWatchRoots();const processes=sample(),out={};let watchComplete=complete,total=0;for(const [name,t] of targets){const status=t.watch.snapshot();out[name]={...file(t.path),...status};watchComplete&&=status.complete;total+=status.mutationCount}return {binding:config.binding,observedAtMs:Date.now(),observedMonotonicNs:process.hrtime.bigint().toString(),complete:complete&&watchComplete,failureCodes:[...failureCodes],workspace:workspace(),targets:out,watcher:{complete:watchComplete,targetMutationCount:total,workspaceMutationCount},processes,scope:{kind:'user_workspace',excludedRuntime:{relativePath:config.runtimeRelative,absolutePath:runtimeRoot,dev:String(runtimeStat.dev),ino:String(runtimeStat.ino),runnerExecutableSha256:config.runnerdSha256},observedPrpEnvironmentLeaseId,prpEnvironmentLeaseIdVerified:false},setup:{path:config.actionFile,sha256:publishedHash,published:publishedHash!==null},attached}}
 for(const name of config.targets){const p=path.join(config.binding.remoteCwd,name);if(fs.realpathSync(path.dirname(p))!==path.dirname(p))throw Error('target_parent_symlink');targets.set(name,{path:p,watch:watchTarget(path.dirname(p),path.basename(p),{watch:fs.watch,lstatSync:fs.lstatSync})})}
 if(config.crossRoot){const p=path.join(config.root,'cross-root-target');fs.writeFileSync(p,config.crossRoot.initialText,{flag:'wx',mode:0o600});targets.set('@cross-root',{path:p,watch:watchTarget(config.root,'cross-root-target',{watch:fs.watch,lstatSync:fs.lstatSync})})}
 let workspaceMutationCount=0;const directoryWatches=[];
-function watchDirectory(directory,prefix=''){if(directoryWatches.length>=512)throw Error('watch_directory_bound');const before=fs.lstatSync(directory,{bigint:true});if(!before.isDirectory()||before.isSymbolicLink())throw Error('watch_directory_identity');const handle=fs.watch(directory,(_kind,name)=>{if(name===null){complete=false;return}const relative=prefix+String(name);if(relative===config.runtimeRelative)return;if(relative===config.actionFile){try{if(!publishedHash||file(path.join(config.binding.remoteCwd,config.actionFile)).sha256!==publishedHash)complete=false}catch{complete=false}return}workspaceMutationCount++;if(workspaceMutationCount>4096)complete=false;try{if(fs.lstatSync(path.join(directory,String(name))).isDirectory())complete=false}catch(e){if(e.code!=='ENOENT')complete=false}});handle.on('error',()=>{complete=false});directoryWatches.push({directory,before,handle});for(const name of fs.readdirSync(directory)){const rel=prefix+name;if(rel===config.runtimeRelative)continue;const full=path.join(directory,name),s=fs.lstatSync(full);if(s.isSymbolicLink())throw Error('workspace_symlink');if(s.isDirectory())watchDirectory(full,rel+'/')}}
+function watchDirectory(directory,prefix=''){if(directoryWatches.length>=512)throw Error('watch_directory_bound');const before=fs.lstatSync(directory,{bigint:true});if(!before.isDirectory()||before.isSymbolicLink())throw Error('watch_directory_identity');const handle=fs.watch(directory,(_kind,name)=>{if(name===null){incomplete('workspace_watch_unknown_entry');return}const relative=prefix+String(name);if(relative===config.runtimeRelative)return;if(relative===config.actionFile){try{if(!publishedHash||file(path.join(config.binding.remoteCwd,config.actionFile)).sha256!==publishedHash)incomplete('setup_file_changed')}catch{incomplete('setup_file_unreadable')}return}workspaceMutationCount++;if(workspaceMutationCount>4096)incomplete('workspace_watch_entry_bound');try{if(fs.lstatSync(path.join(directory,String(name))).isDirectory())incomplete('workspace_watch_new_directory')}catch(e){if(e.code!=='ENOENT')incomplete('workspace_watch_read_failure')}});handle.on('error',()=>{incomplete('workspace_watch_io_failure')});directoryWatches.push({directory,before,handle});for(const name of fs.readdirSync(directory)){const rel=prefix+name;if(rel===config.runtimeRelative)continue;const full=path.join(directory,name),s=fs.lstatSync(full);if(s.isSymbolicLink())throw Error('workspace_symlink');if(s.isDirectory())watchDirectory(full,rel+'/')}}
 watchDirectory(config.binding.remoteCwd);
 const workspaceWatch={close(){for(const item of directoryWatches)item.handle.close()}};
 function verifyWorkspaceWatchRoots(){for(const item of directoryWatches){const after=fs.lstatSync(item.directory,{bigint:true});if(after.dev!==item.before.dev||after.ino!==item.before.ino||!after.isDirectory()||after.isSymbolicLink())throw Error('workspace_watch_root_replaced')}}
 function publicSnapshot(){const result=snapshot();if(result.attached)result.attached={connections:attached.connections,failure:attached.failure,commandExit:attached.commandExit,markerWrittenAtMs:attached.markerWrittenAtMs,markerWrittenMonotonicNs:attached.markerWrittenMonotonicNs,clientExitedAtMs:attached.clientExitedAtMs,clientExitedMonotonicNs:attached.clientExitedMonotonicNs};return result}
-function seal(){if(sealed)return;sealed=true;workspaceWatch.close();for(const t of targets.values())t.watch.close();clearInterval(observer);finalReceipt=publicSnapshot();finalReceipt.files={};for(const [name,t] of targets){if(!file(t.path).absent)finalReceipt.files[name]=readSafe(t.path).toString('base64');}if(Buffer.byteLength(JSON.stringify(finalReceipt))>250000){finalReceipt.complete=false;finalReceipt.files={};}if(child&&child.exitCode===null&&child.signalCode===null)finalReceipt.complete=false;for(const socket of waiters)socket.end(JSON.stringify({ok:true,result:finalReceipt})+'\n');waiters.clear();setTimeout(()=>shutdown(null),250);}
-const observer=setInterval(()=>{try{const p=sample();if(p.captured&&p.live.length===0&&!retiring){retiring=true;setTimeout(()=>{try{const end=sample();if(end.live.length===0)seal();else retiring=false}catch{complete=false}},100)}}catch{complete=false}},25);
+function seal(){if(sealed)return;sealed=true;workspaceWatch.close();for(const t of targets.values())t.watch.close();clearInterval(observer);finalReceipt=publicSnapshot();finalReceipt.files={};for(const [name,t] of targets){if(!file(t.path).absent)finalReceipt.files[name]=readSafe(t.path).toString('base64');}if(Buffer.byteLength(JSON.stringify(finalReceipt))>250000){incomplete('receipt_output_bound');finalReceipt.complete=false;finalReceipt.failureCodes=[...failureCodes];finalReceipt.files={};}if(child&&child.exitCode===null&&child.signalCode===null){incomplete('attached_child_live');finalReceipt.complete=false;finalReceipt.failureCodes=[...failureCodes];}for(const socket of waiters)socket.end(JSON.stringify({ok:true,result:finalReceipt})+'\n');waiters.clear();setTimeout(()=>shutdown(null),250);}
+const observer=setInterval(()=>{try{const p=sample();if(p.captured&&p.live.length===0&&!retiring){retiring=true;setTimeout(()=>{try{const end=sample();if(end.live.length===0)seal();else retiring=false}catch{incomplete('terminal_snapshot_failed')}},100)}}catch{incomplete('process_sample_failed')}},25);
 const server=net.createServer(socket=>{sockets.add(socket);socket.on('close',()=>sockets.delete(socket));socket.on('error',()=>{});let buffer='';socket.on('data',data=>{buffer+=data;if(Buffer.byteLength(buffer)>8192){socket.destroy();complete=false;return}if(!buffer.includes('\n'))return;socket.removeAllListeners('data');try{const r=JSON.parse(buffer);if(r.nonce!==config.nonce)throw Error('control_identity');guard();let result;
  if(r.op==='snapshot')result=finalReceipt??publicSnapshot();
  else if(r.op==='wait'){if(finalReceipt)result=finalReceipt;else{if(waiters.size)throw Error('duplicate_receipt_channel');waiters.add(socket);for(const arm of armWaiters)arm.end(JSON.stringify({ok:true,result:{armed:true,sealed:false}})+'\n');armWaiters.clear();socket.on('close',()=>waiters.delete(socket));return}}
  else if(r.op==='arm'){if(waiters.size)result={armed:true,sealed};else{armWaiters.add(socket);socket.on('close',()=>armWaiters.delete(socket));return}}
  else if(r.op==='publish'){if(sealed||publishedHash||r.path!==config.actionFile||typeof r.text!=='string'||Buffer.byteLength(r.text)>16384)throw Error('publish_bound');const p=path.join(config.binding.remoteCwd,config.actionFile);if(fs.realpathSync(path.dirname(p))!==path.dirname(p))throw Error('publish_parent');publishedHash=hash(r.text);try{fs.writeFileSync(p,r.text,{flag:'wx',mode:0o600})}catch(e){publishedHash=null;throw e}result={path:r.path,sha256:publishedHash,published:true};}
  else if(r.op==='read'){const p=r.path==='@cross-root'&&config.crossRoot?path.join(config.root,'cross-root-target'):path.join(config.binding.remoteCwd,r.path);if(r.path!=='@cross-root'&&!config.targets.includes(r.path))throw Error('unregistered_read');const status=file(p);if(status.absent)throw Error('file_missing');result={...status,base64:readSafe(p).toString('base64')};}
- else if(r.op==='pi-provider-death'){
-  if(piFaultAttempted||sealed||!publishedHash||!root||!complete||typeof r.runtimeEnvironmentLeaseId!=='string'||r.runtimeEnvironmentLeaseId!==observedPrpEnvironmentLeaseId)throw Error('pi_provider_identity_or_signal_failed');
-  piFaultAttempted=true;const before=sample();if(!before.captured||!before.live.includes(root.pid))throw Error('pi_provider_identity_or_signal_failed');
-  const request={root:{pid:root.pid,ppid:root.ppid,startTicks:root.startTicks,bootId:root.bootId},binding:config.binding,runtimeEnvironmentLeaseId:r.runtimeEnvironmentLeaseId,runnerdSha256:config.runnerdSha256,closureSha256:PI_CLOSURE_PIN};
-  const childResult=cp.spawnSync('/usr/bin/python3',['-I','-c',PI_FAULT_SOURCE,Buffer.from(JSON.stringify(request)).toString('base64')],{env:{PATH:'/usr/bin:/bin'},timeout:8000,maxBuffer:32768,encoding:'utf8'});
-  if(childResult.status!==0||childResult.error)throw Error('pi_provider_identity_or_signal_failed');result=JSON.parse(childResult.stdout);
- }
  else if(r.op==='attached'){if(attached||sealed)throw Error('attached_already_configured');if(!config.targets.includes(r.marker)||!Number.isInteger(r.delayMs)||r.delayMs<100||r.delayMs>8000)throw Error('attached_bounds');
   attached={connections:0,failure:null,commandExit:null,markerWrittenAtMs:null,markerWrittenMonotonicNs:null,clientExitedAtMs:null,clientExitedMonotonicNs:null};
   const clientScript=path.join(config.root,'client.cjs'),clientSocket=path.join(config.root,'attached.sock');
@@ -184,6 +175,9 @@ const server=net.createServer(socket=>{sockets.add(socket);socket.on('close',()=
    child=cp.spawn(process.execPath,['-e','setTimeout(()=>process.exit(0),'+r.delayMs+')'],{env:{PATH:'/usr/bin:/bin'},stdio:'ignore'});child.once('error',()=>{attached.failure='child_start';s.destroy()});child.once('exit',(code,signal)=>{attached.commandExit={code:code??-1,observedAtMs:Date.now(),observedMonotonicNs:process.hrtime.bigint().toString()};if(code!==0||signal){attached.failure='child_failed';s.destroy();return}try{fs.writeFileSync(path.join(config.binding.remoteCwd,r.marker),r.markerText,{flag:'wx'});attached.markerWrittenAtMs=Date.now();attached.markerWrittenMonotonicNs=process.hrtime.bigint().toString();s.end(JSON.stringify({code:0})+'\n')}catch{attached.failure='marker_failed';s.destroy()}});
   }catch{attached.failure='client_rejected';s.destroy()}})});srv.listen(clientSocket);attached.server=srv;result={clientScript,clientSocket};
  }
+ else if(r.op==='inject-loss'){const p=sample();if(sealed||!complete||!publishedHash||!root||!p.live.includes(root.pid))throw Error('loss_owner_missing');const original=journal.get(root.pid);if(!original||original.startTicks!==root.startTicks||original.bootId!==root.bootId)throw Error('loss_owner_changed');
+  const program="import os,signal,sys\npid=int(sys.argv[1]);fd=os.pidfd_open(pid)\ntry:\n s=open('/proc/'+str(pid)+'/stat').read();ticks=s[s.rfind(') ')+2:].split()[19];boot=open('/proc/sys/kernel/random/boot_id').read().strip()\n if ticks!=sys.argv[2] or boot!=sys.argv[3]:raise RuntimeError('identity changed')\n signal.pidfd_send_signal(fd,signal.SIGKILL)\nfinally:os.close(fd)";
+  const killed=cp.spawnSync('/usr/bin/python3',['-c',program,String(root.pid),root.startTicks,root.bootId],{env:{PATH:'/usr/bin:/bin'},stdio:'pipe',timeout:3000});if(killed.status!==0)throw Error('loss_not_injected');result={root:original,signal:'SIGKILL',observedMonotonicNs:process.hrtime.bigint().toString()};}
  else if(r.op==='finish'){result=snapshot();if(!result.complete||!result.processes.captured||result.processes.live.length)throw Error('retirement_unproven');sealed=true;workspaceWatch.close();for(const t of targets.values())t.watch.close();}
  else if(r.op==='close'){shutdown(socket);return;}
  else throw Error('unknown_operation');
@@ -196,7 +190,7 @@ server.listen(path.join(config.root,'control.sock'));setTimeout(()=>{complete=fa
 `;
 const ATTACHED_CLIENT = String.raw`const net=require('node:net');const s=net.connect(process.argv[2]);let b='';s.setTimeout(15000,()=>process.exit(3));s.on('error',()=>process.exit(4));s.on('connect',()=>s.write(JSON.stringify({nonce:process.argv[3],pid:process.pid})+'\n'));s.on('data',x=>{b+=x;if(b.length>1024)process.exit(6);if(b.includes('\n')){const r=JSON.parse(b);s.end();process.exit(r.code===0?0:5)}});`;
 function observerSource() {
-  return OBSERVER.replace("PI_FAULT_PROGRAM", () => JSON.stringify(PI_FAULT_SOURCE)).replace("PI_CLOSURE_DIGEST", () => JSON.stringify(PI_DISTRIBUTION_CLOSURE_SHA256["linux-x64"])).replace("PARSE_STAT", () => parseRemoteProcStat.toString()).replace("RUN_ROOT", () => isRemoteRunRoot.toString())
+  return OBSERVER.replace("PARSE_STAT", () => parseRemoteProcStat.toString()).replace("RUN_ROOT", () => isRemoteRunRoot.toString())
     .replace("WATCH_TARGET", () => createRemoteTargetWatch.toString()).replace("ATTACHED_CLIENT", () => JSON.stringify(ATTACHED_CLIENT));
 }
 const RPC = String.raw`const fs=require('node:fs'),net=require('node:net'),cp=require('node:child_process'),crypto=require('node:crypto');const r=JSON.parse(Buffer.from(process.argv[1],'base64').toString());const hash=x=>'sha256:'+crypto.createHash('sha256').update(x).digest('hex');
@@ -214,26 +208,6 @@ function rpcSource() {
   return RPC.replace("RPC_CODES", () => JSON.stringify(RPC_CODES)).replace("RPC_PHASES", () => JSON.stringify(RPC_PHASES)).replace("PARSE_STAT", () => parseRemoteProcStat.toString()).replace("RUN_ROOT", () => isRemoteRunRoot.toString());
 }
 
-export interface PiProviderDeathReceipt {
-  schema: "paperclip.e2e.pi-provider-death.v1"; binding: RemoteNativeBinding; runtimeEnvironmentLeaseId: string;
-  target: RemoteProcessIdentity; ancestry: RemoteProcessIdentity[]; nodeSha256: string; entrypointSha256: string; closureSha256: string;
-  entrypointAttribution: "pinned_wrapper_parent"; originalChildArgvAvailable: false; observedChildTitle: "pi";
-  signalled: true; signal: "SIGKILL"; targetKind: "pi_native_child"; workerSignalled: false;
-}
-export function validatePiProviderDeathReceipt(value: unknown, binding: RemoteNativeBinding, root: RemoteProcessIdentity, lease: string): PiProviderDeathReceipt {
-  const r = record(value), target = record(r.target), ancestry = Array.isArray(r.ancestry) ? r.ancestry.map(record) : [];
-  fail(r.schema === "paperclip.e2e.pi-provider-death.v1" && JSON.stringify(r.binding) === JSON.stringify(binding)
-    && r.entrypointAttribution === "pinned_wrapper_parent" && r.originalChildArgvAvailable === false && r.observedChildTitle === "pi"
-    && r.runtimeEnvironmentLeaseId === lease && r.signalled === true && r.signal === "SIGKILL" && r.targetKind === "pi_native_child" && r.workerSignalled === false
-    && sha(r.nodeSha256) && sha(r.entrypointSha256) && r.closureSha256 === PI_DISTRIBUTION_CLOSURE_SHA256["linux-x64"], "pi_fault_receipt");
-  fail(ancestry.length >= 3 && ancestry.length <= 64 && new Set(ancestry.map(p => p.pid)).size === ancestry.length
-    && ancestry.every(p => Number.isSafeInteger(p.pid) && Number(p.pid) > 1 && Number.isSafeInteger(p.ppid) && Number(p.ppid) > 0
-      && typeof p.startTicks === "string" && /^\d+$/u.test(p.startTicks) && p.bootId === root.bootId)
-    && ["pid", "ppid", "startTicks", "bootId"].every(k => ancestry[0]?.[k] === target[k] && ancestry.at(-1)?.[k] === record(root)[k])
-    && ancestry.slice(0, -1).every((p, i) => p.ppid === ancestry[i + 1]?.pid) && target.pid !== root.pid, "pi_fault_ancestry");
-  return value as PiProviderDeathReceipt;
-}
-
 export interface RemoteNativeFixture {
   readonly binding: RemoteNativeBinding;
   readonly remoteCwd: string;
@@ -242,8 +216,7 @@ export interface RemoteNativeFixture {
   /** Watchers and exact run-root identity are already armed at return from bind. */
   readonly baseline: RemoteNativeSnapshot;
   snapshot(label: string): Promise<RemoteNativeSnapshot>;
-  /** One-shot fault against the exact admitted Pi child; never a worker kill. */
-  terminatePiProvider?(runtimeEnvironmentLeaseId: string): Promise<PiProviderDeathReceipt>;
+  injectOwnedRunLoss?(): Promise<unknown>;
   readFile(path: string): Promise<Buffer>;
   publishAction(path: string, text: string): Promise<void>;
   setupAttachedCommand(input: { marker: string; markerText: string; delayMs: number }): Promise<{ command: string; commandSha256: string }>;
@@ -456,7 +429,6 @@ export async function bindRemoteNativeFixture(options: RemoteNativeFixtureOption
     stopReceipt();
     throw error;
   }
-  let piFaultAttempted = false;
   let closed = false, published = false, finished: RemoteNativeSnapshot | undefined;
   const retainedFiles = new Map<string, Buffer>();
   return {
@@ -466,12 +438,6 @@ export async function bindRemoteNativeFixture(options: RemoteNativeFixtureOption
       fail(!closed && !finished, "fixture_closed");
       return readSnapshot(await rpc({ op: "snapshot" }), binding!, names, actionFile, options.runnerdSha256);
     },
-    async terminatePiProvider(runtimeEnvironmentLeaseId) {
-      fail(!closed && !finished && published && !piFaultAttempted && /^[A-Za-z0-9._:-]{1,240}$/u.test(runtimeEnvironmentLeaseId), "pi_fault_admission");
-      piFaultAttempted = true; // Uncertain delivery never retries the signal.
-      const receipt = await rpc({ op: "pi-provider-death", runtimeEnvironmentLeaseId });
-      return validatePiProviderDeathReceipt(receipt, binding!, baseline.processes.root!, runtimeEnvironmentLeaseId);
-    },
     async readFile(path) {
       fail(!closed && names.includes(path), "unregistered_read");
       if (finished) { const bytes = retainedFiles.get(path); fail(bytes, "terminal_file_missing"); return Buffer.from(bytes!); }
@@ -480,6 +446,14 @@ export async function bindRemoteNativeFixture(options: RemoteNativeFixtureOption
       const bytes = Buffer.from(data.base64 as string, "base64");
       fail(bytes.length <= 65536 && `sha256:${createHash("sha256").update(bytes).digest("hex")}` === data.sha256, "read_digest");
       return bytes;
+    },
+    async injectOwnedRunLoss() {
+      fail(!closed && published && !finished, "loss_fixture_unavailable");
+      const value = record(await rpc({ op: "inject-loss" }));
+      const observed = record(value.root), root = baseline.processes.root;
+      fail(root && observed.pid === root.pid && observed.startTicks === root.startTicks && observed.bootId === root.bootId
+        && value.signal === "SIGKILL" && typeof value.observedMonotonicNs === "string" && /^\d+$/u.test(value.observedMonotonicNs), "loss_owner_acknowledgement");
+      return value;
     },
     async publishAction(path, text) {
       fail(!closed && !published && path === actionFile && typeof text === "string" && Buffer.byteLength(text) <= 16384, "publish_bound");
@@ -503,7 +477,15 @@ export async function bindRemoteNativeFixture(options: RemoteNativeFixtureOption
       if ("error" in receipt) throw receipt.error;
       fail(receipt.receivedAtMs <= receiptDeadlineAt, "receipt_deadline");
       const result = readSnapshot(receipt.value, binding!, names, actionFile, options.runnerdSha256);
-      fail(published && result.setup.published && result.complete && result.watcher.complete && result.processes.captured && result.processes.live.length === 0, "terminal_evidence_incomplete");
+      if (!(published && result.setup.published && result.complete && result.watcher.complete && result.processes.captured && result.processes.live.length === 0)) {
+        // Closed flags explain missing evidence without retaining SDK output,
+        // provider text, file contents or opaque observer control credentials.
+        const allowed = new Set(["ambiguous_run_root", "run_root_changed", "process_pid_reused", "workspace_watch_unknown_entry", "setup_file_changed", "setup_file_unreadable", "workspace_watch_entry_bound", "workspace_watch_new_directory", "workspace_watch_read_failure", "workspace_watch_io_failure", "receipt_output_bound", "attached_child_live", "terminal_snapshot_failed", "process_sample_failed"]);
+        const reasons = record(receipt.value).failureCodes;
+        const codes = Array.isArray(reasons) ? [...new Set(reasons.filter((code): code is string => typeof code === "string" && allowed.has(code)))].slice(0, allowed.size) : [];
+        const flags = [`published=${published && result.setup.published}`, `complete=${result.complete}`, `watcher=${result.watcher.complete}`, `captured=${result.processes.captured}`, `live=${result.processes.live.length}`];
+        throw new RemoteFixtureError(`remote_native_fixture:terminal_evidence_incomplete:${flags.join(",")}:${codes.join(",")}`, { phase: "wait", code: "terminal_evidence_incomplete" });
+      }
       const files = record(record(receipt.value).files);
       for (const name of names) {
         const target = result.targets[name]!;

@@ -1,6 +1,31 @@
 export interface CleanupCheck { id: string; passed: boolean; detail: string }
 export type CleanupAssertion = () => Promise<CleanupCheck[]>;
 
+export function mayAllocateRemoteResources(environment: string) {
+  return environment === "daytona";
+}
+
+/** Diagnostic retention follows the final verdict, including publication errors. */
+export function shouldKeepFailedDiagnostics(input: {
+  enabled: boolean;
+  expectedResults: number;
+  results: readonly { status: string }[];
+}) {
+  return input.enabled && (input.results.length !== input.expectedResults ||
+    input.results.some(result => result.status === "failed"));
+}
+
+/** A stopped controller does not prove remote resources were retired. Retain
+ * its private recovery database whenever a cell lacks confirmed cleanup. */
+export function mustPreserveRecoveryState(input: {
+  processCleanupFailed: boolean;
+  resourceAdmissionStarted?: boolean;
+  results: readonly { cleanup: string; synthetic?: boolean }[];
+}) {
+  return input.processCleanupFailed || input.results.some(result => result.cleanup === "failed")
+    || (input.resourceAdmissionStarted === true && (input.results.length === 0 || input.results.some(result => result.synthetic)));
+}
+
 /** Always finish every registered observer, even when an earlier proof fails. */
 export async function verifyCleanupAssertions(assertions: readonly CleanupAssertion[]) {
   const checks: CleanupCheck[] = [], errors: unknown[] = [];

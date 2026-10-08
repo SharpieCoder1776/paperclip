@@ -118,7 +118,7 @@ export async function materializePinnedCursorDistribution(options = {}) {
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
-if (process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
+if (process.argv[1]?.endsWith("/materialize-cursor-distribution.mjs") && pathToFileURL(resolve(process.argv[1])).href === import.meta.url) {
   const [destination, platform, architecture, archivePath] = process.argv.slice(2);
-  process.stdout.write(`${JSON.stringify(await materializePinnedCursorDistribution({ destination, platform, architecture, archivePath }))}\n`);
+  materializePinnedCursorDistribution({ destination, platform, architecture, archivePath }).then(result => process.stdout.write(`${JSON.stringify(result)}\n`)).catch(error => { console.error(error.message); process.exitCode = 1; });
 }

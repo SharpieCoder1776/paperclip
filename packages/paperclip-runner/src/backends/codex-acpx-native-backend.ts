@@ -15,7 +15,7 @@ import {
 
 export interface CodexAcpxNativeSessionBackendOptions extends Omit<
   CodexAcpxDriverOptions,
-  "model" | "permissionMode" | "cursorMode" | "piThinkingLevel" | "systemInstructions" | "providerPolicy" | "runtimeContext"
+  "model" | "permissionMode" | "mode" | "piThinkingLevel" | "systemInstructions" | "providerPolicy" | "runtimeContext"
 > {}
 
 export type AcpxNativeSessionBackendOptions =
@@ -74,7 +74,7 @@ export function createAcpxNativeSessionBackend(
       agent: input.provider.agent,
       model: input.provider.model,
       permissionMode: input.provider.permissionMode ?? "approve-reads",
-      cursorMode: input.provider.cursorMode,
+      mode: input.provider.mode,
       piThinkingLevel: input.provider.piThinkingLevel,
       systemInstructions,
       runtimeContext: "runtimeContext" in input ? input.runtimeContext : null,

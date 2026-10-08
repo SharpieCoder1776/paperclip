@@ -39,6 +39,7 @@ export function acpxCapabilities(
   const profile = ACPX_CAPABILITY_PROFILES[agent];
   return {
     resume: profile.recovery === "session-load",
+    toolRefreshOnResume: profile.recovery === "session-load" && profile.toolRefreshOnResume === true,
     typedEvents: true,
     typedEventFamilies: providerFamilyCapabilities({
       plan: profile.plans === "semantic-only" ? "unsupported" : "available",

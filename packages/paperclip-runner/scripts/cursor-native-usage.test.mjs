@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { createCursorNativeUsage } from "./cursor-native-usage.mjs";
+import cursorNativeUsageSource from "./cursor-native-usage-source.json" with { type: "json" };
+
+test("public bundles preserve the collector's exact pinned patch bytes", () => {
+  assert.equal(cursorNativeUsageSource, createCursorNativeUsage.toString());
+});
 
 const id = "00000000-0000-0000-0000-000000000001";
 const event = counters => ({ message: { case: "turnEnded", value: counters } });

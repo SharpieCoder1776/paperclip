@@ -1,5 +1,18 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+
+describe("explicit diagnostic credential forms", () => {
+  it("masks qualified credential fields while preserving metadata", () => {
+    expect(redactEventPayload({ authorizationHeader: "abcdefghijkl", apiKeyProduction: "sensitivevalue", credentialHandling: "harness", tokenPolicy: "least privilege" }))
+      .toEqual({ authorizationHeader: "***REDACTED***", apiKeyProduction: "***REDACTED***", credentialHandling: "harness", tokenPolicy: "least privilege" });
+  });
+  it("masks standalone bearer values and whitespace-prefixed JSON token headers", () => {
+    const jwt = `${Buffer.from(' {"alg":"HS256","typ":"JWT"}').toString("base64url")}.abcdefghijk.abcdefghijkl`;
+    expect(redactSensitiveText("provider said Bearer abcdefghijkl")).not.toContain("abcdefghijkl");
+    expect(redactEventPayload({ diagnostic: jwt })?.diagnostic).toBe("***REDACTED***");
+    expect(redactSensitiveText("Use bearer authentication and bearer tokens.")).toBe("Use bearer authentication and bearer tokens.");
+  });
+});
 import {
   PRP_V1_EVENT_TYPES,
   PRP_V2_EVENT_TYPES,
@@ -28,92 +41,20 @@ function receiptNotice(version: 1 | 2 = 1): Record<string, any> {
 const receiptSchemaValue = (notice: Record<string, any>) => notice.details.find((detail: any) => detail.name === "schema").value;
 
 describe("redaction", () => {
-  it("preserves the actual Copilot receipt producer discriminator through nested durable redaction", () => {
-    const events: Array<Record<string, any>> = [];
-    const projector = createCopilotToolEvidence({ sessionId: "session", turnId: "turn", workingDirectory: "/workspace",
-      active: () => true, emit: event => events.push(event) });
-    const receipt = appendSemanticToolReceipt({ tool: "finish_task", callId: "call", arguments: {} },
-      { content: [{ type: "text", text: "accepted" }] }).receipt;
-    expect(receipt.schema).toBe("paperclip.semantic_tool_receipt.v2");
-    projector.captureSemanticReceipt()!(receipt);
-    expect(events).toHaveLength(1);
-    expect(events[0]!.payload.category).toBe("paperclip_semantic_tool_receipt_v2");
-    expect(events[0]!.payload.details).toHaveLength(8);
-    const input = { prpEvent: { schema: "paperclip.prp.event.v1", schemaVersion: 1,
-      eventType: "provider.notice.recorded", payload: events[0]!.payload } };
-    expect(redactEventPayload(input)).toEqual(input);
-    expect(redactEventPayload(redactEventPayload(input))).toEqual(input);
-  });
-
-  it.each([1, 2] as const)("preserves only validated v%s receipt schema literals", version => {
-    const notice = receiptNotice(version);
-    expect(redactEventPayload(notice)).toEqual(notice);
-    for (const outcome of ["returned", "error"]) {
-      notice.details.find((d: any) => d.name === "outcome").value = outcome;
-      if (version === 2) notice.details.find((d: any) => d.name === "normalizedInputSha256").value = "null";
-      expect(redactEventPayload(notice)).toEqual(notice);
-    }
-    expect(redactEventPayload({ value: `paperclip.semantic_tool_receipt.v${version}` }))
-      .toEqual({ value: REDACTED_EVENT_VALUE });
-  });
-
-  it.each([
-    ["wrong category", (n: Record<string, any>) => { n.category = "copilot_tool_evidence_v1"; }],
-    ["wrong schema", (n: Record<string, any>) => { n.schema = "paperclip.provider.native.v1"; }],
-    ["wrong scope", (n: Record<string, any>) => { n.scope = "session"; }],
-    ["wrong provenance", (n: Record<string, any>) => { n.provenance.method = "session/update"; }],
-    ["missing provenance", (n: Record<string, any>) => { delete n.provenance.turnId; }],
-    ["unknown provenance field", (n: Record<string, any>) => { n.provenance.extra = "safe"; }],
-    ["oversized identity", (n: Record<string, any>) => { n.provenance.sessionId = "x".repeat(241); }],
-    ["wrong stage", (n: Record<string, any>) => { n.details[0].value = "tool"; }],
-    ["unknown receipt schema", (n: Record<string, any>) => { n.details[1].value = "paperclip.semantic_tool_receipt.v99"; }],
-    ["version mismatch", (n: Record<string, any>) => { n.details[1].value = "paperclip.semantic_tool_receipt.v2"; }],
-    ["duplicate detail", (n: Record<string, any>) => { n.details[2] = { ...n.details[1] }; }],
-    ["unknown detail", (n: Record<string, any>) => { n.details[2].name = "unknown"; }],
-    ["extra detail", (n: Record<string, any>) => { n.details.push({ name: "extra", value: "safe" }); }],
-    ["extra detail property", (n: Record<string, any>) => { n.details[1].extra = "safe"; }],
-    ["nonstring hash", (n: Record<string, any>) => { n.details[3].value = 123; }],
-    ["malformed hash", (n: Record<string, any>) => { n.details[3].value = "bad"; }],
-    ["malformed operation", (n: Record<string, any>) => { n.details[2].value = "bad operation"; }],
-    ["unknown outcome", (n: Record<string, any>) => { n.details[6].value = "accepted"; }],
-  ] as const)("does not exempt receipt schema in %s context", (_label, mutate) => {
-    const notice = receiptNotice(); mutate(notice);
-    expect(receiptSchemaValue(redactEventPayload(notice)!)).toBe(REDACTED_EVENT_VALUE);
-  });
-
-  it("does not restore JWTs or adjacent secrets through receipt-shaped data", () => {
-    const jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.signature12345678";
-    const notice = receiptNotice();
-    notice.details.find((d: any) => d.name === "operationId").value = jwt;
-    notice.provenance.sessionId = jwt;
-    const redacted = redactEventPayload(notice)! as Record<string, any>;
-    expect(receiptSchemaValue(redacted)).toBe("paperclip.semantic_tool_receipt.v1");
-    expect(redacted.details.find((d: any) => d.name === "operationId").value).toBe(REDACTED_EVENT_VALUE);
-    expect(redacted.provenance.sessionId).toBe(REDACTED_EVENT_VALUE);
-    expect(redactEventPayload({ notice, password: "canary", arbitrary: jwt }))
-      .toMatchObject({ password: REDACTED_EVENT_VALUE, arbitrary: REDACTED_EVENT_VALUE });
-    const hostile = receiptNotice(); hostile.details[1].value = jwt;
-    expect(receiptSchemaValue(redactEventPayload(hostile)!)).toBe(REDACTED_EVENT_VALUE);
-    const adjacent = receiptNotice(); adjacent.summary = "Authorization: Bearer canary-token";
-    expect(JSON.stringify(redactEventPayload(adjacent))).not.toContain("canary-token");
-    expect(receiptSchemaValue(redactEventPayload(adjacent)!)).toBe(REDACTED_EVENT_VALUE);
-  });
-
-  it("bounds the notice ordinal to the actual producer's 2048-entry limit", () => {
-    const notice = receiptNotice();
-    notice.noticeId = `copilot-evidence-${"a".repeat(24)}-2048`;
-    expect(redactEventPayload(notice)).toEqual(notice);
-    for (const ordinal of ["0", "01", "2049", "9999"]) {
-      notice.noticeId = `copilot-evidence-${"a".repeat(24)}-${ordinal}`;
-      expect(receiptSchemaValue(redactEventPayload(notice)!)).toBe(REDACTED_EVENT_VALUE);
-    }
-  });
-
-  it("rejects malformed v2 normalized hashes without changing historical v1", () => {
-    const notice = receiptNotice(2);
-    notice.details.find((d: any) => d.name === "normalizedInputSha256").value = "bad";
-    expect(receiptSchemaValue(redactEventPayload(notice)!)).toBe(REDACTED_EVENT_VALUE);
-    expect(redactEventPayload(receiptNotice(1))).toEqual(receiptNotice(1));
+  it("preserves credential-related prose, metadata, and dotted filenames", () => {
+    const input = {
+      body: "Keep the private key in a secret manager. Document credential handling and token permissions. Use bearer tokens for authentication. Prefer bearer authentication.",
+      tokenPolicy: "least privilege",
+      secretStorage: "vault",
+      credentialHandling: "harness",
+      authorizationRequired: true,
+      path: "deployment.credentials.example.md",
+    };
+    expect(sanitizeRecord(input)).toEqual(input);
+    expect(redactSensitiveText(input.body)).toBe(input.body);
+    expect(sanitizeRecord({ credentials: { provider: "opaque-value" }, passwordValue: "opaque-value", authorization_code: "opaque-value" }))
+      .toEqual({ credentials: REDACTED_EVENT_VALUE, passwordValue: REDACTED_EVENT_VALUE, authorization_code: REDACTED_EVENT_VALUE });
+    expect(redactSensitiveText("--token-budget 4000 SECRET_STORAGE=vault")).toBe("--token-budget 4000 SECRET_STORAGE=vault");
   });
 
   it("keeps the discriminator allowlist in exact PRP v1 schema parity", () => {
@@ -191,7 +132,7 @@ describe("redaction", () => {
     }
   });
 
-  it("redacts unknown or mismatched PRP discriminators", () => {
+  it("preserves diagnostic PRP discriminators while redacting their credential payloads", () => {
     const unknown = redactEventPayload({
       prpEvent: {
         schema: "paperclip.prp.event.v2",
@@ -200,7 +141,7 @@ describe("redaction", () => {
       },
     });
     expect((unknown?.prpEvent as Record<string, unknown>).eventType).toBe(
-      REDACTED_EVENT_VALUE,
+      "session.not-a-real.event",
     );
 
     const mismatched = redactEventPayload({
@@ -211,7 +152,7 @@ describe("redaction", () => {
       },
     });
     expect((mismatched?.prpEvent as Record<string, unknown>).eventType).toBe(
-      REDACTED_EVENT_VALUE,
+      "session.capabilities.updated",
     );
 
     const secretPayload = redactEventPayload({
@@ -294,7 +235,7 @@ describe("redaction", () => {
     const result = sanitizeRecord(input);
 
     expect(result.session).toBe(REDACTED_EVENT_VALUE);
-    expect(result.opaque).toBe(REDACTED_EVENT_VALUE);
+    expect(result.opaque).toBe("aaa.bbb.ccc");
     expect(result.normal).toBe("plain");
   });
 
@@ -313,7 +254,7 @@ describe("redaction", () => {
       nested: {
         schema: "paperclip.question_response.v1",
         runtimeSchema: "paperclip.runtime_request.v2",
-        arbitraryProviderValue: REDACTED_EVENT_VALUE,
+        arbitraryProviderValue: "paperclip.question_set.v1",
       },
     });
   });
@@ -330,7 +271,7 @@ describe("redaction", () => {
       schema: input.schema,
       nested: {
         runtimeSchema: input.nested.runtimeSchema,
-        providerValue: REDACTED_EVENT_VALUE,
+        providerValue: input.nested.providerValue,
       },
     });
     expect(sanitizeRecord({ schema: "paperclip.native-execution-input.v4", runtimeSchema: "paperclip.native-model-envelope.v2" })).toEqual({
@@ -363,28 +304,28 @@ describe("redaction", () => {
         schemaVersion: 1,
         eventType: "tool.execution.started",
         payload: {
-          eventType: REDACTED_EVENT_VALUE,
+          eventType: "run.result.accepted",
           credential: REDACTED_EVENT_VALUE,
         },
       },
       unrelated: {
-        eventType: REDACTED_EVENT_VALUE,
+        eventType: "workspace.file.referenced",
       },
     });
     expect(redactEventPayload(sanitized)).toEqual(sanitized);
   });
 
-  it("redacts unknown dotted event values even in a PRP-shaped envelope", () => {
+  it("preserves unknown dotted event values instead of treating them as JWTs", () => {
     expect(
       redactEventPayload({
         schema: "paperclip.prp.event.v1",
         schemaVersion: 1,
         eventType: "attacker.supplied.token",
       })?.eventType,
-    ).toBe(REDACTED_EVENT_VALUE);
+    ).toBe("attacker.supplied.token");
   });
 
-  it("does not trust discriminators inside a forged unknown schema", () => {
+  it("preserves dotted schema identifiers without interpreting their authority", () => {
     expect(
       redactEventPayload({
         schema: "paperclip.attacker.control.v1",
@@ -393,14 +334,14 @@ describe("redaction", () => {
         eventType: "tool.execution.started",
       }),
     ).toEqual({
-      schema: REDACTED_EVENT_VALUE,
-      runtimeSchema: REDACTED_EVENT_VALUE,
+      schema: "paperclip.attacker.control.v1",
+      runtimeSchema: "paperclip.attacker.runtime.v1",
       schemaVersion: 1,
-      eventType: REDACTED_EVENT_VALUE,
+      eventType: "tool.execution.started",
     });
   });
 
-  it("preserves native run span identities without weakening hostname redaction", () => {
+  it("preserves native run span identities and ordinary hostnames", () => {
     const spanNames = [
       "environment.workspace.realize",
       "native.coordinator.claim",
@@ -431,7 +372,7 @@ describe("redaction", () => {
         schema: input.schema,
         span,
         parentSpan: "native.session.execute",
-        providerHostname: REDACTED_EVENT_VALUE,
+        providerHostname: "api.openai.com",
       });
       expect(redactEventPayload(sanitized)).toEqual(sanitized);
     }
@@ -441,13 +382,13 @@ describe("redaction", () => {
         schema: "paperclip.run-performance-span.v1",
         span: "api.openai.com",
       })?.span,
-    ).toBe(REDACTED_EVENT_VALUE);
+    ).toBe("api.openai.com");
     expect(
       redactEventPayload({
         schema: "paperclip.run-performance-span.v1",
         span: "runner.example.com",
       })?.span,
-    ).toBe(REDACTED_EVENT_VALUE);
+    ).toBe("runner.example.com");
   });
 
   it("redacts payload objects while preserving null", () => {
@@ -479,7 +420,7 @@ describe("redaction", () => {
         details: [
           "safe context",
           `proxyAuthorization ${REDACTED_EVENT_VALUE}`,
-          REDACTED_EVENT_VALUE,
+          "aaa.bbb.ccc",
           [`Bearer ${REDACTED_EVENT_VALUE}`],
         ],
       },

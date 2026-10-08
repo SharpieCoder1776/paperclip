@@ -12,7 +12,7 @@ it("keeps native mode/permission choices explicit and artifact export pending", 
   }
   expect(cursorNativeCaseDesigns.filter(row => row.method !== "session/request_permission").every(row => row.cursorMode === "plan")).toBe(true);
   expect(cursorNativeCaseDesigns.find(row => row.method === "session/request_permission")).toMatchObject({ cursorMode: "agent", permissionMode: "approve-reads" });
-  expect(cursorNativeTasks.find(task => task.id === "native-write-deny-reconnect")!.expectedTerminalState).toEqual({ issue: "in_progress", run: "cancelled" });
+  expect(cursorNativeTasks.find(task => task.id === "native-write-deny-reconnect")!.expectedTerminalState).toEqual({ issue: "in_progress", run: "failed" });
   expect(cursorNativePlanArtifactGate.status).toBe("pending");
   expect(cursorNativePlanArtifactGate.nativePath).toContain("<private provider HOME>");
 });
@@ -43,7 +43,7 @@ it("awaits owned remote baseline before returning the exact remote denial comman
   const prepared = await prepareCursorRemoteAction({ fixture, ...binding, deniedRelative: "denied.txt", prompt: "Perform the actual test" });
   order.push("publish-action");
   expect(order).toEqual(["before-action-publication", "baseline-ready", "publish-action"]);
-  expect(prepared.prompt).toContain("printf 'MUST_NOT_EXIST' > '/home/daytona/paperclip-workspace/denied.txt'");
+  expect(prepared.prompt).toContain("printf 'MUST-NOT-EXIST' > '/home/daytona/paperclip-workspace/denied.txt'");
   expect(prepared.initial).toMatchObject({ phase: "before-request", absent: true });
   expect(prepared.command?.commandSha256).toMatch(/^sha256:[a-f0-9]{64}$/);
   await expect(prepareCursorRemoteAction({ fixture, ...binding, runId: "wrong-run", deniedRelative: "denied.txt", prompt: "test" })).rejects.toThrow(/another run/);
@@ -62,13 +62,13 @@ it("refuses remote native execution before touching API when bootstrap or cleanu
 });
 
 it("requires the exact passive accepted-plan disposition without mode promotion or extra work", () => {
-  const state = { issue: { id: "issue", status: "in_progress" }, interactions: [{ status: "answered" }], runs: [{ id: "run", nativeIssueId: "issue", runtimeMode: "native", status: "succeeded", runnerProfileJson: { nativeExecutionInput: { provider: { cursorMode: "plan" } } }, resultJson: { finalizationPhase: "committed", finalizationReasonCode: "native_plan_accepted_waiting_for_continuation", authoritativeDecision: "in_progress" } }] };
+  const state = { issue: { id: "issue", status: "in_progress" }, interactions: [{ status: "answered" }], runs: [{ id: "run", nativeIssueId: "issue", runtimeMode: "native", status: "succeeded", runnerProfileJson: { nativeExecutionInput: { provider: { mode: "plan" } } }, resultJson: { finalizationPhase: "committed", finalizationReasonCode: "native_plan_accepted_waiting_for_continuation", authoritativeDecision: "in_progress" } }] };
   expect(hasCursorAcceptedPlanWait(state)).toBe(true);
   const mutations = [
     (s: typeof state) => { s.issue.status = "done"; },
     (s: typeof state) => { s.runs[0]!.status = "failed"; },
     (s: typeof state) => { s.runs[0]!.nativeIssueId = "foreign"; },
-    (s: typeof state) => { s.runs[0]!.runnerProfileJson.nativeExecutionInput.provider.cursorMode = "agent"; },
+    (s: typeof state) => { s.runs[0]!.runnerProfileJson.nativeExecutionInput.provider.mode = "agent"; },
     (s: typeof state) => { s.runs[0]!.resultJson.finalizationReasonCode = "live_continuation_registered"; },
     (s: typeof state) => { s.runs[0]!.resultJson.finalizationPhase = "pending"; },
     (s: typeof state) => { s.runs.push(structuredClone(s.runs[0]!)); },

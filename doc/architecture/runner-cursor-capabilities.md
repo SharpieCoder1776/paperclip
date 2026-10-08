@@ -1,6 +1,51 @@
 # Cursor ACP capability inventory
 
-Current source candidate (2026-10-01): **Cursor profile v10 is unqualified**.
+Current source (2026-10-06): **Cursor profile v14 combines the model-selection correction with mainline ACP resource-not-found handling**.
+The bundled ACPX runtime forwards unlisted model IDs unchanged, verifies model
+selection responses, and reapplies a selected model when a loaded session reports
+another model. Its 14 package tests exercise startup and reconnect through a real
+ACPX manager with offline ACP fixtures. Cursor activity projection now belongs to
+its adapter. The release attestation binds the updated ACPX patch; older profile
+identities cannot be reused for new launches. Committed plan waits remain readable.
+The live evidence below belongs to profile v11; it does not certify v14 artifacts.
+
+Historical release candidate (2026-10-04): **Cursor profile v11 passed local and Daytona qualification**.
+It ports snapshot `22c78242a4e0c2369fecf0c2dc4e7600fbad6706` onto mainline
+`dd868ed125cd709506dd9b29fca640a44d580501`, preserving newer recovery and owned
+warm agent-file handoff. The [readiness checklist](../plans/2026-10-03-cursor-production-readiness.md)
+records all ten local and all ten remote gates, including cleanup. The final
+public installed-package smoke is recorded separately there. The historical
+results below retain their own identities and limits.
+
+The public installation path is `paperclipai runtime setup cursor`. It explicitly
+downloads the pinned CLI `2026.09.26-dd393fe`, applies the source-owned patch, and
+verifies the complete runtime closure. npm installation does not download Cursor.
+Run setup as the OS user that runs Paperclip. Local assets live in that account's
+`~/.paperclip/runtimes/cursor/<platform>-<arch>/<closure-sha256>`, independently of
+npm directory ownership and isolated provider HOME/XDG settings. Existing image
+assets remain authoritative; an invalid packaged runtime cannot fall back to the
+user cache. Release assembly and runtime loading reject stale Cursor profile or
+closure identities even when the supplied manifest has been rehashed.
+Ordinary provider packs include those assets, and Daytona image preparation uses
+the same distribution. Supported targets are macOS ARM64/x64 and Linux x64.
+
+Configure a company secret and bind it in the agent environment as
+`CURSOR_API_KEY` or `CURSOR_AUTH_TOKEN`. Select the model explicitly; native ACP
+must acknowledge that exact model before execution. Missing assets, credentials,
+model access, and entitlement failures are surfaced without selecting a substitute.
+`acpxSessionMode` supports Agent (default), Plan, and Ask and is part of recovery
+identity. Acceptance of a native plan succeeds the planning run while leaving the
+task open awaiting explicit direction; acceptance alone never starts implementation.
+
+Paperclip semantic questions are the supported question path. The native
+AskQuestion handler is defensive compatibility code and is not certified for this
+release. Per-run dollar usage is unavailable. Partial counters remain diagnostic
+observations with unknown semantics; they do not establish measured spend or an
+enforceable per-run dollar bound. Qualification uses the separately authorized
+account cap. Image-input delivery, detailed native diffs, and deeper child
+transcripts remain follow-ups.
+
+Historical source candidate (2026-10-01): **Cursor profile v10 is unqualified**.
 Native tool IDs containing C0, C1 or DEL control characters now use the same
 bounded hash in permission details, passive evidence and the sidecar tool event.
 Blank permission IDs are rejected because ACPX drops blank tool-event identity.
@@ -59,7 +104,9 @@ The reference is the runner's Codex app-server integration and its closed thread
 
 ## Capability matrix against Codex app-server
 
-“Implemented” below means a tested Cursor implementation wired through the shared runtime, canonical activity channel and durable interaction path. It is not a claim of authenticated end-to-end qualification.
+This historical field inventory distinguishes implemented transport behavior from
+its original qualification gaps. The current release proof and exclusions are in
+the readiness report linked above; native AskQuestion remains uncertified.
 
 | Capability | Cursor harness/ACP evidence | Paperclip treatment | Remaining gap or qualification |
 |---|---|---|---|
@@ -411,9 +458,13 @@ are still required before qualification.
 ## Cursor profile v5: admitted native session modes (2026-09-29)
 
 The explicit `acpxSessionMode` configuration selects `agent` (the default),
-`plan`, or `ask` for Cursor. The provider/sidecar field is `cursorMode`; it is
-separate from ACPX's persistent/oneshot session lifecycle. Other providers reject
-this field. Mode is included in the immutable session key and recovery identity;
+`plan`, or `ask` for Cursor. Historical v5 qualification snapshots used
+`cursorMode`; those saved results retain their original identities. The current
+production port uses the generic provider/sidecar `mode` identifier, separate from ACPX's persistent/oneshot session lifecycle. Shared
+TypeScript/Rust transport and recovery code treat it as an opaque bounded string.
+Each provider adapter owns supported values, defaults, native translation and
+acknowledgement; currently only the Cursor adapter qualifies configurable modes.
+Mode is included in the immutable session key and recovery identity;
 a missing or changed mode cannot reopen an existing v5 session.
 
 Admission checks the pinned native `session/new` or `session/load` response's

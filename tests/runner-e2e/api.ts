@@ -27,6 +27,12 @@ export class RemoteAdmissionReadError extends Error {
 
 export class RunnerApi {
   readonly baseURL: string;
+  private browserCookie?: string;
+
+  setBrowserSession(cookie: string) { this.browserCookie = cookie; }
+  private sessionOptions() {
+    return this.browserCookie ? { headers: { Cookie: this.browserCookie, Origin: this.baseURL } } : {};
+  }
 
   constructor(readonly request: APIRequestContext) {
     const port = process.env.PAPERCLIP_RUNNER_E2E_PORT?.trim();
@@ -35,13 +41,13 @@ export class RunnerApi {
   }
 
   async get<T>(path: string, options?: { timeout: number }): Promise<T> {
-    const response = await (options ? this.request.get(path, options) : this.request.get(path));
+    const response = await this.request.get(path, { ...this.sessionOptions(), ...options });
     if (!response.ok()) throw new RunnerApiHttpError(response.status(), await failureMessage(response, "GET"));
     return response.json() as Promise<T>;
   }
 
   async post<T>(path: string, data?: unknown): Promise<T> {
-    const response = await this.request.post(path, { data });
+    const response = await this.request.post(path, { data, ...this.sessionOptions() });
     if (!response.ok()) throw new Error(await failureMessage(response, "POST"));
     return response.json() as Promise<T>;
   }
@@ -54,7 +60,7 @@ export class RunnerApi {
   async postSensitive<T>(path: string, data: unknown): Promise<T> {
     const response = await fetch(new URL(path, this.baseURL), {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...this.sessionOptions().headers },
       body: JSON.stringify(data),
     });
     if (!response.ok) {
@@ -66,7 +72,7 @@ export class RunnerApi {
   }
 
   async patch<T>(path: string, data: unknown): Promise<T> {
-    const response = await this.request.patch(path, { data });
+    const response = await this.request.patch(path, { data, ...this.sessionOptions() });
     if (!response.ok())
       throw new Error(await failureMessage(response, "PATCH"));
     return response.json() as Promise<T>;
@@ -94,7 +100,7 @@ export class RunnerApi {
     path: string,
     options?: { allowNotFound?: boolean },
   ): Promise<void> {
-    const response = await this.request.delete(path);
+    const response = await this.request.delete(path, this.sessionOptions());
     if (response.ok() || (options?.allowNotFound && response.status() === 404))
       return;
     throw new Error(await failureMessage(response, "DELETE"));

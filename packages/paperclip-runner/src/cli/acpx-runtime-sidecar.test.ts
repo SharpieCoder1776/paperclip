@@ -15,7 +15,7 @@ import { deliverAcpxResponse } from "../drivers/acpx/response-delivery.js";
 import { normalizeAcpxPermission } from "../drivers/acpx/acp-permission-adapter.js";
 import { ACPX_CAPABILITY_PROFILES } from "../drivers/acpx/capability-profiles.js";
 import { resolveQualifiedAcpxProfile } from "../drivers/acpx/qualified-profiles.js";
-import { ACPX_SIDECAR_PROTOCOL_VERSION, ACPX_SIDECAR_MAX_FRAME_BYTES, stringifyAcpxSidecarFrame, parseAcpxSidecarRequest, record, text } from "../drivers/acpx/sidecar-protocol.js";
+import { ACPX_SIDECAR_PROTOCOL_VERSION, stringifyAcpxSidecarFrame } from "../drivers/acpx/sidecar-protocol.js";
 import { canonicalProviderEventsFromAcpxRuntimeEvent } from "../provider-events.js";
 import { createPiMessageProjection } from "../drivers/acpx/pi-message-projection.js";
 import { createCopilotToolEvidence } from "../drivers/acpx/copilot-tool-evidence.js";
@@ -432,8 +432,8 @@ describe("qualified ACPX runtime sidecar", () => {
     const wait = new Function("permissions", "openParams", "normalizeAcpxPermission", "emit",
       `let turnId = "turn-1", requestSequence = 0; const MAX_PENDING_INPUTS = 512;
        const stableRequestId = () => "request-1"; const requireAcpxResponseDelivery = c => c.responseDelivery;
-       return async function(activeTurnId, agent, request, context, toolEvidence) { ${source.slice(start, end)}`)(
-      permissions, { agent }, normalizeAcpxPermission, (_event: string, payload: { choices: Array<{ key: string }>; origin: unknown }) => emitted.push(payload),
+       return async function(activeTurnId, request, context) { const agent = openParams.agent, toolEvidence = undefined; ${source.slice(start, end)}`)(
+      permissions, { agent }, normalizeAcpxPermission, (_event: string, payload: { choices: Array<{ key: string }> }) => emitted.push(payload),
     );
     const abort = new AbortController();
     const pending = wait("turn-1", agent, { sessionId: "session", inferredKind: "edit", raw: {
@@ -1024,7 +1024,7 @@ describe("qualified ACPX runtime sidecar", () => {
   it.each([
     ["cursor", "explicit-cursor-model"],
     ["copilot", "explicit-copilot-model"],
-  ] as const)("initializes the declared %s candidate without promoting its profile", async (agent, model) => {
+  ] as const)("initializes the declared %s profile with its current admission status", async (agent, model) => {
     const sidecar = startSidecar();
     sidecar.write(initializeRequest(1, agent, model));
     const frame = await sidecar.next((value) => value.id === 1);
@@ -1032,7 +1032,7 @@ describe("qualified ACPX runtime sidecar", () => {
     const result = frame.result as Record<string, unknown>;
     expect(result.profile).toEqual(resolveQualifiedAcpxProfile(agent, model));
     expect(result.profile).toMatchObject({ reportedModelId: model });
-    expect(ACPX_CAPABILITY_PROFILES[agent].qualification).toBe("pending");
+    expect(ACPX_CAPABILITY_PROFILES[agent].qualification).toBe(agent === "cursor" ? "qualified" : "pending");
   });
 
   it("fails closed after an unsupported provider bootstrap", async () => {

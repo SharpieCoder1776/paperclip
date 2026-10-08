@@ -45,7 +45,7 @@ export interface AcpxSidecarOpenParams {
   agent: QualifiedAcpxAgent;
   model: string;
   permissionMode: NativeAcpxPermissionMode;
-  cursorMode?: "agent" | "plan" | "ask";
+  mode?: string;
   piThinkingLevel?: "off" | "low" | "high" | "max";
   permissionModePinned: boolean;
   providerPolicy?: { readOnly: boolean };
@@ -67,7 +67,7 @@ export interface AcpxExpectedSessionIdentity {
   requestedModel: string;
   effectiveModel: string;
   permissionMode?: NativeAcpxPermissionMode;
-  cursorMode?: "agent" | "plan" | "ask";
+  mode?: string;
   piThinkingLevel?: "off" | "low" | "high" | "max";
   providerLifetimeFenceCandidates: readonly [number, number, number];
 }

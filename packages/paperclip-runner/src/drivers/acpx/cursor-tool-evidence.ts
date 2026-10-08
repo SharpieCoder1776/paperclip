@@ -11,7 +11,7 @@ const id = (v: unknown): v is string => typeof v === "string" && v.length > 0 &&
 const nativeToolId = (v: unknown): string | undefined => typeof v === "string" && v.length > 0 && v.length <= 240 ? cursorToolIdentity(v) : undefined;
 const digest = (s: string) => createHash("sha256").update(s).digest("hex");
 type Fields = Record<string, string | boolean>;
-type Tool = { kind?: string; commandSha256?: string; read?: SingleReadEvidence };
+type Tool = { kind?: string; commandSha256?: string; read?: SingleReadEvidence; pendingReadNotice?: boolean };
 type Permission = { requestId: string; kind?: string; hasInput: boolean; commandSha256?: string; declineOffered: boolean; requested?: boolean; outcome?: string; delivered?: boolean };
 type ProjectionFailureReason =
   | "evidence_limit" | "tool_limit" | "missing_command_origin" | "reused_tool_origin"
@@ -90,7 +90,15 @@ export function createCursorToolEvidence(binding: {
         if (state.kind && state.kind !== call.kind) throw new ProjectionFailure("changed_tool_kind");
         state.kind = call.kind;
       }
-      if (state.kind === "read") state.read = updateSingleReadEvidence(state.read, call, binding.workingDirectory);
+      if (state.kind === "read") {
+        state.read = updateSingleReadEvidence(state.read, call, binding.workingDirectory);
+        if (state.read.pendingOriginInput && call.tag === "tool_call") state.pendingReadNotice = true;
+        if (state.pendingReadNotice && !state.read.pendingOriginInput) {
+          notice("tool", toolId, { status: "pending", operation: "read", ...(state.read.targetSha256 ? { readTargetSha256: state.read.targetSha256 } : {}) });
+          state.pendingReadNotice = false;
+        }
+        if (state.pendingReadNotice) return;
+      }
       if (call.rawInput !== undefined && state.kind === "execute") {
         const hash = command(call);
         if (!hash || (call.tag !== "tool_call" && !state.commandSha256) || (state.commandSha256 && state.commandSha256 !== hash)) throw new ProjectionFailure("changed_or_missing_command");
