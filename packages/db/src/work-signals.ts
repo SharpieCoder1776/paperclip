@@ -1,6 +1,6 @@
 /** Process-local hints for durable work. The database remains the source of truth. */
 type Listener = (uncertainCommit: boolean) => void;
-type Scope = { listeners: Map<string, Set<Listener>> };
+type Scope = { listeners: Map<string, Set<Listener>>; uncertainTopics: Set<string> };
 type Context = { scope: Scope; pending: Set<string> | null };
 const contexts = new WeakMap<object, Context>();
 
@@ -9,11 +9,12 @@ const contexts = new WeakMap<object, Context>();
 // transaction before commit. No SQL, connection, or timer is added here.
 type Transactional = { transaction: (...args: any[]) => Promise<any> };
 export function installDatabaseWorkSignals<T extends Transactional>(db: T): T {
-  install(db, { scope: { listeners: new Map() }, pending: null });
+  install(db, { scope: { listeners: new Map(), uncertainTopics: new Set() }, pending: null });
   return db;
 }
 
 function publish(scope: Scope, topic: string, uncertainCommit = false) {
+  if (uncertainCommit) scope.uncertainTopics.add(topic);
   for (const listener of scope.listeners.get(topic) ?? []) {
     try { listener(uncertainCommit); }
     catch (error) { process.emitWarning(`Database work listener failed: ${String(error)}`); }
@@ -63,5 +64,8 @@ export function subscribeDatabaseWork(connection: object, topic: string, listene
   let listeners = context.scope.listeners.get(topic);
   if (!listeners) context.scope.listeners.set(topic, listeners = new Set());
   listeners.add(listener);
+  // A consumer may start after an ambiguous startup write or be replaced
+  // without restarting the database owner. Retain that uncertainty in scope.
+  if (context.scope.uncertainTopics.has(topic)) listener(true);
   return () => { listeners.delete(listener); };
 }

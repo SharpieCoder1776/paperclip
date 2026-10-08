@@ -53,6 +53,17 @@ describe("database work signals", () => {
     expect(first).toHaveBeenCalledTimes(1);
   });
 
+  it("retains uncertain writes made before a consumer subscribes", () => {
+    const db = installDatabaseWorkSignals(connection());
+    signalDatabaseWork(db, "queue", true);
+    const first = vi.fn();
+    subscribeDatabaseWork(db, "queue", first)();
+    expect(first).toHaveBeenCalledWith(true);
+    const replacement = vi.fn();
+    subscribeDatabaseWork(db, "queue", replacement);
+    expect(replacement).toHaveBeenCalledWith(true);
+  });
+
   it("isolates databases and topics and releases subscriptions", () => {
     const db = installDatabaseWorkSignals(connection());
     const other = installDatabaseWorkSignals(connection());
