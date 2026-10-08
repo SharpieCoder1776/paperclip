@@ -333,12 +333,13 @@ Mailbox `follow_up` entries reference new comments on an accepted assignment. Re
 
 ## Tool inventory
 
-The top-level MCP catalog contains these 15 transport and lifecycle tools:
+The top-level MCP catalog contains these 16 transport, lifecycle, and profile tools:
 `paperclip_dot_capabilities`, `paperclip_dot_request_turn`, `paperclip_dot_tasks`,
 `paperclip_dot_request_work`, `paperclip_dot_pair`, `paperclip_dot_inbox`,
 `paperclip_dot_read`, `paperclip_dot_accept`, `paperclip_dot_tool`,
 `paperclip_dot_progress`, `paperclip_dot_finish`, `paperclip_dot_operation_status`,
-`paperclip_dot_confirm_event`, `paperclip_dot_renew`, `paperclip_dot_control_ack`.
+`paperclip_dot_confirm_event`, `paperclip_dot_renew`, `paperclip_dot_control_ack`,
+`paperclip_dot_set_avatar`.
 
 After accepting work, use `paperclip_dot_tool` with a name from the assignment's
 actual catalog. Availability depends on work mode, permissions, assigned apps,
@@ -392,7 +393,7 @@ are available. The assignment catalog is read on each new assignment.
 
 The [2026-10-08 cloud Runner and invitation decision](plans/2026-10-08-cloud-dot-runner-and-external-invitations.md) keeps remote agents on the new Runner infrastructure. In addition to shared assignment lifecycle handling, this preserves a sandbox boundary for future tools that may access Paperclip workspaces. The first cloud version gives Dot no Paperclip workspace file or command tools; Dot works on its own computer.
 
-The proposed entry is **Invite an external agent → Dot / Hermes / Other**. Dot receives a copyable setup prompt and watched connection checks, with readiness requiring a confirmed event round trip. The Storybook journeys demonstrate this flow with fixtures; they do not change the current self-hosted setup or establish cloud support. Hermes continues to use the existing external-agent invitation prompt.
+The self-hosted entry is **New Agent → Invite an external agent → Dot / Hermes / Other**. Dot receives a copyable setup prompt and live connection checks, with readiness requiring a confirmed event round trip. The same components have Storybook journeys with fixture data. Cloud execution remains disabled pending qualification. Hermes continues to use the existing external-agent invitation prompt.
 
 ## Agent avatar
 
