@@ -13,10 +13,5 @@ export function dotInvitePrompt(generation = 1) {
     pairingCode: `STORYBOOK-NOT-A-REAL-CODE-${generation}`,
     expiresAt: "15 minutes after this invitation is created",
   });
-  // The proposed invite controller will automatically issue the test. The live
-  // self-hosted runtime still uses its existing manual Test event delivery action.
-  return current.replace(
-    'Once the event subscription is verified, tell me to click "Test event delivery" in Paperclip. Confirm that challenge when it arrives so the connection becomes ready.',
-    "Once the event subscription is verified, Paperclip will send a test event automatically. Confirm its readiness challenge when it arrives so the connection becomes ready. Tell me when the connection works in both directions.",
-  );
+  return current;
 }

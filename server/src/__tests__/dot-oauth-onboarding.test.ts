@@ -26,7 +26,7 @@ describe("Dot onboarding with an operator-issued pairing capability", () => {
     await db.insert(authUsers).values({ id: userId, name: "Operator", email: userId + "@example.test", createdAt: new Date(), updatedAt: new Date() });
     const [company] = await db.insert(companies).values({ name: "Dot onboarding", issuePrefix: "DO" + randomBytes(3).toString("hex") }).returning();
     await db.insert(companyMemberships).values({ companyId: company!.id, principalType: "user", principalId: userId, membershipRole: "owner", status: "active" });
-    const [agent] = await db.insert(agents).values({ companyId: company!.id, name: "Dot", adapterType: "paperclip_runner", status: "active" }).returning();
+    const [agent] = await db.insert(agents).values({ companyId: company!.id, name: "Dot", adapterType: "paperclip_runner", adapterConfig: { provider: "openai_dot" }, status: "active" }).returning();
     const oauth = createPublicMcpOAuth(db, { ...config, ...(authorizationOrigin ? { authorizationOrigin } : {}) });
     const client = await oauth.register({ client_name: "Dot", redirect_uris: [callback], grant_types: ["authorization_code", "refresh_token", DEVICE_GRANT] }, randomUUID());
     const verifier = randomBytes(32).toString("base64url");

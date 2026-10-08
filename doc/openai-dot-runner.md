@@ -403,3 +403,12 @@ Input is `{ "imageBase64": "<raw base64 image bytes>" }`. PNG, JPEG and WebP are
 The same capability is available to agents via `PUT /api/companies/:companyId/agents/:agentId/avatar` with the same body and normal agent bearer authentication. An agent can update only itself; company operators can update their agents. Returned `appearance.customAvatarAssetId` and `avatarUrl` propagate through existing agent views. The image is a company-scoped private asset served through authenticated `/api/assets/:assetId/content`, not a public image URL for third-party embeds. Previous assets remain available for configuration history. Activity records contain asset metadata, never image bytes.
 
 The setup prompt asks Dot to upload its own current image only if it can obtain it. We have not verified a supported OpenAI avatar-export API. Avatar availability must never block pairing; Dot may call the tool later. This capability does not add workspace access or change Runner assignment execution.
+
+
+### Invite from the agent picker
+
+In a self-hosted instance, enable **OpenAI Dot** and **Assistant connections (MCP)**, then choose **New Agent → Invite an external agent → Dot**. Copy the setup prompt into your Dot. Paperclip creates a scoped Runner agent and watches connection, event subscription, and a harmless event round trip. If your company requires hire approval, approve the agent before copying its pairing prompt. The test event is sent automatically after the callback is verified; Retry test event remains available if confirmation times out.
+
+Reopening setup resumes the operator's unfinished invitation. Pairing codes are not stored in browser persistence. After refreshing, use **Create a new prompt**; this replaces only that pending capability, without revoking an established connection. Hermes and Other continue to use the ordinary external-agent invitation flow.
+
+Cloud Dot execution is still gated. The external launcher hooks do not yet enable managed cloud execution or qualify tenant MCP routing. See [the cloud Runner plan](plans/2026-10-08-cloud-dot-runner-and-external-invitations.md).

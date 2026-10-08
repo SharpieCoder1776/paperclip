@@ -125,7 +125,7 @@ describe("durable Dot Runner integration", () => {
     const events = createPublicMcpEvents(db, oauth, async () => { throw new Error("personal API dispatch forbidden"); }, { enableDotRunner: true, fetch: fetcher });
     const subscription = { name: "paperclip.dot.mailbox_updated", arguments: { companyId: company!.id, bindingId: pairing.bindingId }, delivery: { mode: "webhook", url: "https://example.com/dot-hook", secret } };
     await events.subscribe(principal, subscription);
-    await broker.challenge(company!.id, agent!.id); await events.tick();
+    await events.tick();
     if (!received.length) throw new Error("Dot readiness delivery missing: " + JSON.stringify(await db.select({ outcome: mcpEventDeliveries.outcome, event: mcpEventDeliveries.event }).from(mcpEventDeliveries)));
     expect(received.at(-1)?.data.kind).toBe("readiness_challenge");
     expect(received.at(-1)?.data).not.toHaveProperty("challenge");

@@ -2,7 +2,7 @@
 
 Date: 2026-10-08
 
-Status: architecture decision and interactive Storybook proposal. This change documents the cloud design and supplies shared presentation components and fixture-driven stories. It does **not** implement cloud Dot execution or replace the live invitation controller. Existing self-hosted Dot setup retains its manual event-delivery test.
+Status: the live self-hosted invitation flow is implemented. The shared square picker and animated dialog now create/resume scoped invitations, preserve company approval, watch server state, and send the event test automatically. Dot driver launcher/checkpoint hooks are qualified with a real Rust process. **Cloud execution remains disabled:** the existing managed-environment and Cloud MCP guards are unchanged pending sandbox and tenant-ingress qualification.
 
 ## Decision: remote agents use the new Runner infrastructure
 
@@ -39,7 +39,7 @@ This preserves one lifecycle without promising that every provider performs iden
 
 Entry: **New agent → Invite an external agent → Dot / Hermes / Other**.
 
-The picker uses square cards matching the harness picker, with the Dot and Hermes brand marks. The shared dialog animates content-height changes without scaling text and respects reduced-motion preferences. The Dot option is governed by the standalone Dot experimental setting and its required Assistant connections (MCP) dependency in the eventual live controller. Experimental infrastructure prerequisites belong in settings, not as a list of implementation details in this invitation.
+The picker uses square cards matching the harness picker, with the Dot and Hermes brand marks. The shared dialog animates content-height changes without scaling text and respects reduced-motion preferences. The Dot option is governed by the standalone Dot experimental setting and its required Assistant connections (MCP) dependency in the live controller. Experimental infrastructure prerequisites belong in settings, not as a list of implementation details in this invitation.
 
 1. Choose **Dot**. Paperclip creates a company/agent-scoped invitation and a short-lived pairing prompt.
 2. Show **Copy setup prompt**, using the shared `AgentSetupPrompt` component with the Dot mark. Tell the user to send the whole prompt to their Dot in ChatGPT. The preview remains inspectable and offers selectable text if clipboard access fails.
@@ -50,7 +50,7 @@ The picker uses square cards matching the harness picker, with the Dot and Herme
    - **Test event confirmed** — Paperclip sent a readiness challenge through the event path and the paired Dot explicitly confirmed it through MCP.
 5. Show **Your Dot is connected** and **Done** only after the round trip is confirmed. A successful copy, OAuth connection, or subscription alone is insufficient.
 
-The future invite controller automatically issues the readiness test once the subscription is verified. It must be idempotent across refreshes/reconnects, correlate confirmation to the current binding and challenge, and never mark a replacement binding ready using an old confirmation. Use server events or bounded polling with reconnect/revalidation. UI timers are not evidence of success.
+The event delivery worker automatically issues the readiness test once the subscription is verified. It must be idempotent across refreshes/reconnects, correlate confirmation to the current binding and challenge, and never mark a replacement binding ready using an old confirmation. Use server events or bounded polling with reconnect/revalidation. UI timers are not evidence of success.
 
 When the event test times out, preserve completed checks and offer **Retry test event**. When the pairing code expires, offer **Create a new prompt**, invalidate the old prompt, and require the new one to be copied. When watching is interrupted, state that updates are paused and offer **Reconnect updates**; do not imply Dot itself disconnected. Returning to the picker must preserve a pending invitation rather than silently create duplicate agents or codes. Closing the dialog must not revoke an established connection.
 
@@ -68,10 +68,23 @@ Folder: `ui/storybook/stories/external-agent-invite/`.
 - **Onboarding / External agent invitation / Components**: picker and each controlled connection-check state.
 - Interaction stories exercise copy → watched progression → success, retry without discarding completed checks, and measured intermediate heights while the modal expands and contracts.
 
-The shared presentation lives in `ui/src/components/new-agent/ExternalAgentInviteContent.tsx`. Storybook alone supplies timers and fixture credentials at `.example` URLs. It reuses the live Dot prompt with a documented fixture-only substitution for automatic readiness testing; the live runtime prompt still requires its manual readiness test. Both prompts now optionally ask Dot to upload its own avatar using `paperclip_dot_set_avatar`; avatar availability does not block pairing. Hermes and Other reuse the production invitation builder without modifications.
+The shared presentation lives in `ui/src/components/new-agent/ExternalAgentInviteContent.tsx`. Storybook alone supplies timers and fixture credentials at `.example` URLs. It uses the live Dot prompt unchanged, including automatic readiness testing. The prompt optionally asks Dot to upload its own avatar using `paperclip_dot_set_avatar`; avatar availability does not block pairing. Hermes and Other reuse the production invitation builder without modifications.
 
-Run `pnpm --filter @paperclipai/ui storybook`, then open the journey group. Copying in the interactive Dot story advances simulated checks; the fixed-state stories remain still for inspection. These stories demonstrate the proposed UX, not a successful live cloud pairing.
+Run `pnpm --filter @paperclipai/ui storybook`, then open the journey group. Copying in the interactive Dot story advances simulated checks; the fixed-state stories remain still for inspection. These stories illustrate the live UX with simulated connection evidence; they do not prove a live cloud pairing.
 
 ## Remaining implementation and qualification
 
-Before shipping the cloud flow, implement managed Dot job dispatch, durable owner-scoped bridge routing, admission for idle-initiated work, invitation lifecycle/resume and expiry, automatic event testing, experimental feature gating, and the live watcher. Preserve company isolation, approval rules, budget stops, assignment authority, and mutation receipts. Qualify real OAuth installation, event round trip, assignment execution, unsolicited Dot work, restart/reconnect, cancellation, and expired/revoked credentials against a real sandbox provider. No cloud-ready claim follows from this Storybook pass.
+The live invitation controller, owner-scoped pending-invitation lookup, atomic creation, pending-code replacement, automatic event test, feature gating, and watcher are implemented. Active run controllers poll durable operation rows under their current controller generation and lease, so an operation reserved by another HTTP replica reaches its owning Runner. Idle-initiated work already uses normal admission.
+
+Before shipping cloud, connect Dot's qualified launcher hooks to managed job dispatch and qualify the dedicated tenant MCP ingress. Keep the present cloud restrictions until those paths are proven. The optional external launcher uses target-owned provider checkpoints and refuses recovery when identity or state is missing; it does not invent a replacement Dot thread. Preserve company isolation, approval rules, budget stops, assignment authority, and mutation receipts. Qualify real OAuth installation, event round trip, assignment execution, unsolicited Dot work, restart/reconnect, cancellation, and expired/revoked credentials against a real sandbox provider. No cloud-ready claim follows from this Storybook pass.
+
+
+## Implemented invitation semantics
+
+- `POST /api/companies/:companyId/dot-invitations` finds or creates one unfinished Dot invitation for the signed-in operator. Creation holds a company row lock and commits the agent, membership, grants, approval (when required), and audit entries atomically. The fixed preset disables workspace/attachment access and periodic wakes; normal on-demand admission remains available.
+- `GET` on that path returns the operator's unfinished invitation without a pairing secret. The dialog's existing binding query reports pairing/test expiry and agent approval state.
+- Pairing codes stay in component memory and out of React Query's mutation results. After refresh, the UI explains that the invitation was saved but the prompt was not. Replacing a prompt requires the exact pending binding ID and its issuing operator; a concurrent completed OAuth connection is not revoked.
+- The delivery worker creates one readiness challenge after callback verification under the binding row lock. Refreshing, reconnecting, or repeating a worker tick does not replace that challenge. An expired test needs an explicit retry. A revoked generation cannot confirm it.
+- Hermes and Other share the existing external-agent invitation API and unchanged onboarding prompt. Dot is no longer a separate card in the harness picker.
+
+Verification: a disposable authenticated local instance exercised the natural New Agent entry, Dot prompt copy, Back, Hermes, refresh/resume, and pending-prompt replacement. Signed callback verification, nonce confirmation, scoped OAuth, actual Rust execution, duplicate receipts, and recovery have automated coverage. No real OpenAI Dot or managed cloud sandbox was connected during this implementation pass.
