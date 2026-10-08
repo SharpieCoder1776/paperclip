@@ -1268,12 +1268,23 @@ describe("remote provider pack manifest", () => {
     Object.assign(payload, { candidateProviders: candidates });
     await writeManifest();
     expect(readRemoteProviderPackManifest(root).payload.candidateProviders?.pi?.qualification).toBe("qualified");
+    // The normal pack builder publishes Pi in both inventories. A Pi image
+    // must pass the same reader used by real remote runtime preparation.
+    Object.assign(payload, { providers: { cursor, pi: candidates.pi } });
+    await writeManifest();
+    expect(readRemoteProviderPackManifest(root).payload.providers?.pi?.qualification).toBe("qualified");
+    await mkdir(releaseMetadata, { recursive: true });
+    await cp(join(root, "provider-pack.json"), manifestPath);
+    expect(readBundledRemoteProviderPackManifest(manifestPath).payload.providers?.pi?.qualification).toBe("qualified");
+    Object.assign(payload, { providers: { cursor } });
+    await rm(releaseMetadata, { recursive: true, force: true });
+    await writeManifest();
     await writeFile(join(root, candidatePath, "runtime"), "substitute runtime");
     expect(() => readRemoteProviderPackManifest(root)).toThrow("candidate asset tree digest mismatch");
     await writeFile(join(root, candidatePath, "runtime"), "pinned runtime");
     candidates.pi.qualification = "pending";
     await writeManifest();
-    expect(readRemoteProviderPackManifest(root).payload.candidateProviders?.pi?.qualification).toBe("pending");
+    expect(() => readRemoteProviderPackManifest(root)).toThrow("invalid candidate identity");
     candidates.pi.qualification = "qualified";
     for (const invalid of [{ path: "../outside" }, { qualification: "unknown" }]) {
       const original = { ...candidates.pi };
@@ -1285,7 +1296,7 @@ describe("remote provider pack manifest", () => {
     for (const provider of ["cursor", "copilot"]) {
       Object.assign(candidates, { [provider]: { ...candidates.pi, path: `provider-assets/${provider}/linux-x64` } });
       await writeManifest();
-      expect(() => readRemoteProviderPackManifest(root)).toThrow("invalid candidate identity");
+      expect(() => readRemoteProviderPackManifest(root)).toThrow(provider === "cursor" ? "Cursor profile or closure does not match this release" : "invalid candidate identity");
       delete (candidates as Record<string, unknown>)[provider];
     }
     await writeManifest();
@@ -1560,12 +1571,12 @@ describe("verified native harness backups", () => {
   it("binds Cursor mode across governed and identical recovery identities", () => {
     const execution = {
       ...backupExecution,
-      provider: { kind: "acpx", agent: "cursor", model: "explicit-model", cursorMode: "plan" },
+      provider: { kind: "acpx", agent: "cursor", model: "explicit-model", mode: "plan" },
       interactionResponses: [{ interactionId: "interaction-1" }],
     } as unknown as NativeExecutionInputV1;
-    const identity = (suffix: string, cursorMode: unknown) => {
+    const identity = (suffix: string, mode: unknown) => {
       const value = acpxIdentity(suffix);
-      return { ...value, providerSessionIdentity: { ...value.providerSessionIdentity, cursorMode } };
+      return { ...value, providerSessionIdentity: { ...value.providerSessionIdentity, mode } };
     };
     const previous = identity("previous", "plan");
     const current = identity("current", "plan");
@@ -1580,7 +1591,6 @@ describe("verified native harness backups", () => {
     for (const provider of [
       { kind: "acpx", agent: "cursor", model: "explicit-model" },
       { kind: "acpx", agent: "copilot", model: "explicit-model" },
-      { kind: "acpx", agent: "copilot", model: "explicit-model", cursorMode: "plan" },
     ]) {
       expect(providerSessionIdentityTransitionIsAllowed({
         execution: { ...execution, provider } as unknown as NativeExecutionInputV1, previous, current,
@@ -1983,24 +1993,23 @@ describe("split durable provider checkpoint identity", () => {
 
   it("requires the exact observed Cursor mode in suspended descriptor and identity", () => {
     const profileDigest = `sha256:${"a".repeat(64)}`;
-    const input = execution({ kind: "acpx", agent: "cursor", model: "explicit-model", permissionMode: "deny-all", cursorMode: "plan" }, "acpx_runtime");
+    const input = execution({ kind: "acpx", agent: "cursor", model: "explicit-model", permissionMode: "deny-all", mode: "plan" }, "acpx_runtime");
     const providerState = {
       schema: "paperclip.runner.acpx-provider-state.v3", lifecycle: "suspended", activeTurnId: null, providerExitUnconfirmed: false,
-      descriptor: { kind: "acpx", provider: "acpx", driver: "acpx_runtime", agent: "cursor", model: "explicit-model", commandDigest: profileDigest, normalizedSessionId: "native-session", cursorMode: "plan" },
+      descriptor: { kind: "acpx", provider: "acpx", driver: "acpx_runtime", agent: "cursor", model: "explicit-model", commandDigest: profileDigest, normalizedSessionId: "native-session", mode: "plan" },
       identity: { kind: "acpx", normalizedSessionId: "native-session", acpxRecordId: "record-1", backendSessionId: "backend-1", agentSessionId: "agent-1", profileDigest,
-        workspaceDigest: `sha256:${"b".repeat(64)}`, requestedModel: "explicit-model", effectiveModel: "explicit-model", permissionMode: "deny-all", cursorMode: "plan", providerLifetimeFenceCandidates: [53001, 53002, 53003] },
+        workspaceDigest: `sha256:${"b".repeat(64)}`, requestedModel: "explicit-model", effectiveModel: "explicit-model", permissionMode: "deny-all", mode: "plan", providerLifetimeFenceCandidates: [53001, 53002, 53003] },
     };
     const read = (state: unknown, candidate = input) => providerSessionIdentityFromDurableProviderState({ execution: candidate, providerState: state });
     expect(read(providerState).providerSessionIdentity).toEqual(providerState.identity);
-    for (const cursorMode of [undefined, null, "agent", "ask", "autopilot"]) {
-      expect(read({ ...providerState, identity: { ...providerState.identity, cursorMode } }).providerSessionIdentity).toBeNull();
-      expect(read({ ...providerState, descriptor: { ...providerState.descriptor, cursorMode } }).providerSessionIdentity).toBeNull();
-      expect(read(providerState, execution({ ...input.provider, cursorMode }, "acpx_runtime")).providerSessionIdentity).toBeNull();
+    for (const mode of [undefined, null, "agent", "ask", "autopilot"]) {
+      expect(read({ ...providerState, identity: { ...providerState.identity, mode } }).providerSessionIdentity).toBeNull();
+      expect(read({ ...providerState, descriptor: { ...providerState.descriptor, mode } }).providerSessionIdentity).toBeNull();
+      expect(read(providerState, execution({ ...input.provider, mode }, "acpx_runtime")).providerSessionIdentity).toBeNull();
     }
     const foreign = { ...providerState, descriptor: { ...providerState.descriptor, agent: "copilot" } };
-    for (const cursorMode of [undefined, "plan"]) {
-      expect(read(foreign, execution({ ...input.provider, agent: "copilot", cursorMode }, "acpx_runtime")).providerSessionIdentity).toBeNull();
-    }
+    expect(read(foreign, execution({ ...input.provider, agent: "copilot", mode: undefined }, "acpx_runtime")).providerSessionIdentity).toBeNull();
+    expect(read(foreign, execution({ ...input.provider, agent: "copilot", mode: "plan" }, "acpx_runtime")).providerSessionIdentity).toEqual(providerState.identity);
   });
 
   it.each([
@@ -4944,6 +4953,16 @@ describe("native governed waits", () => {
       emittedAt: "2026-08-31T00:00:00.000Z",
       payload: { kind: "dynamicToolCall" },
     };
+
+    // The durable fallback preserves the question after provider loss, but
+    // cannot turn that lost execution into a successful governed wait.
+    const providerLost = { ...replayedEvent, eventType: "runtime_request.expired" as const,
+      payload: { reason: "provider_process_lost", replayAllowed: false } };
+    const lostObservation = createGovernedWaitEventObservation(async () => waitResult);
+    await lostObservation.observe(providerLost, true);
+    expect(lostObservation.consume(providerLost)).toBeNull();
+    await lostObservation.observe(replayedEvent, true);
+    expect(lostObservation.consume(replayedEvent)).toBeNull();
 
     // The event consumer can lag the provider: a commentary event emitted
     // before the tool began may be processed after its approval exists in DB.
@@ -9442,7 +9461,7 @@ describe("native process ownership", () => {
     },
   );
 
-  it.each(["pi", "copilot"])("rejects ACPX candidate %s without host authorization before constructing a backend", async (agent) => {
+  it.each(["copilot"])("rejects ACPX candidate %s without host authorization before constructing a backend", async (agent) => {
     const piExecution = {
       ...execution,
       binding: { ...execution.binding, runId: "run-acpx-pi-rejected" },

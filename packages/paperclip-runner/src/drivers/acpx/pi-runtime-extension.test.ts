@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, realpath, rename, rm, symlink, writeFile } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import Ajv from "ajv";
 import {
   checkPiNativeTool, installPiRuntimeExtension, piMcpRequest, readPiRuntimeConfiguration,
   PI_NATIVE_QUESTION_TOOL, PI_PERMISSION_TITLE_PREFIX, type PiExtensionApi, type PiRuntimeConfiguration, type PiToolDefinition,
@@ -30,6 +31,43 @@ function harness() {
 }
 
 describe("owned Pi runtime extension", () => {
+  it("advertises only the fields each native question method accepts", async () => {
+    const { config } = await workspace(); const h = harness();
+    await installPiRuntimeExtension(h.api, config);
+    const validate = new Ajv().compile(h.nativeTools[0]!.parameters);
+    const questions = [
+      { method: "select", title: "Color", options: [{ id: "blue", label: "Blue" }] },
+      { method: "confirm", title: "Preference", message: "Prefer dark mode?" },
+      { method: "input", title: "Name", placeholder: "Name" },
+      { method: "editor", title: "Draft", prefill: "Old draft" },
+    ];
+    for (const question of questions) expect(validate(question)).toBe(true);
+    for (const question of [
+      {},
+      { ...questions[0], options: JSON.stringify(questions[0]!.options) },
+      { ...questions[3], placeholder: "Name" },
+      { ...questions[2], prefill: "Old draft" },
+      { ...questions[1], options: [] },
+      { method: "select", title: "Color" },
+      { method: "confirm", title: "Preference" },
+    ]) expect(validate(question)).toBe(false);
+  });
+
+  it("exposes native question field types to gateways that describe root properties", async () => {
+    const { config } = await workspace(); const h = harness();
+    await installPiRuntimeExtension(h.api, config);
+    const schema = h.nativeTools[0]!.parameters;
+    expect(schema.required).toEqual(["method", "title"]);
+    expect(schema.properties).toMatchObject({
+      method: { type: "string", enum: ["select", "confirm", "input", "editor"] },
+      title: { type: "string" },
+      options: { type: "array", items: { type: "object", required: ["id", "label"] } },
+      message: { type: "string" },
+      placeholder: { type: "string" },
+      prefill: { type: "string" },
+    });
+  });
+
   it("stops Pi 1 cache warming even when native economics recommend a paid refresh", async () => {
     const { config } = await workspace(); const h = harness();
     await installPiRuntimeExtension(h.api, config);

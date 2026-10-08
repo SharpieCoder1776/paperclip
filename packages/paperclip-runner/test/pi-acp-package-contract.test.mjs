@@ -149,6 +149,21 @@ test("cancellation closes the iteration before a warm prompt reuses native IDs",
   assert.equal(new Set(starts.map(update => update.toolCallId)).size, 3);
 });
 
+test("acknowledged native cancellation preserves partial usage and refuses service-failure metadata", async t => {
+  const f = await fixture(t, { PI_FIXTURE_CANCEL_ERROR: "1" });
+  const session = await f.call("session/new", { cwd: join(f.root, "workspace"), mcpServers: [] });
+  const active = f.call("session/prompt", { sessionId: session.sessionId, prompt: [{ type: "text", text: "long" }] });
+  await f.call("pi/steer", { sessionId: session.sessionId, message: "fixture admission fence" });
+  f.notify("session/cancel", { sessionId: session.sessionId });
+  const result = await active;
+  assert.equal(result.stopReason, "cancelled");
+  assert.equal(result._meta, undefined);
+  assert.equal(result.usage.inputTokens, 11);
+  assert.equal(result.usage.outputTokens, 3);
+  assert.equal(result.usage.cachedReadTokens, undefined);
+  assert.equal(result.usage._meta.paperclipPi.costUsd, undefined);
+});
+
 test("warm load uses stable display-only history IDs distinct from live execution", async (t) => {
   const f = await fixture(t, { PI_FIXTURE_HISTORY: "1" });
   const session = await f.call("session/new", { cwd: join(f.root, "workspace"), mcpServers: [] });

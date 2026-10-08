@@ -26,9 +26,9 @@ it("rejects foreign package identity and a setup entrypoint outside that package
   await rm(join(f.cli, "provision-pi.cjs")); await symlink(join(other.cli, "provision-pi.cjs"), join(f.cli, "provision-pi.cjs"));
   await expect(resolvePiProvisioner(f.url)).rejects.toThrow("escapes");
 });
-it("provides an explicit Pi-only operator command and rejects other providers before resolution", async () => {
+it("rejects unsupported runtime setup providers before resolution", async () => {
   const program = new Command(); registerRuntimeCommands(program);
-  await expect(program.parseAsync(["node", "paperclipai", "runtime", "setup", "untrusted"])).rejects.toThrow("Supported explicit runtime setup");
+  await expect(program.parseAsync(["node", "paperclipai", "runtime", "setup", "untrusted"])).rejects.toThrow("Supported runtime setup: paperclipai runtime setup pi or cursor");
 });
 
 it("resolves the companion importer only inside the actual public server tar layout", async () => {

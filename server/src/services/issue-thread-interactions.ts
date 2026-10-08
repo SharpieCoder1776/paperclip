@@ -1,3 +1,4 @@
+import { normalizeEscapedLineBreaks } from "@paperclipai/shared/validators/text";
 import { activeIssueInteractionCondition, historicalQuestionCondition } from "./issue-question-context.js";
 import {
   currentContinuationOrigins,

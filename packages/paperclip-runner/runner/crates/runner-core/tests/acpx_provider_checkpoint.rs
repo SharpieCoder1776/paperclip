@@ -51,6 +51,7 @@ fn config(directory: &std::path::Path) -> AcpxProviderSessionConfig {
         working_directory: directory.to_owned(),
         permission_mode: AcpxPermissionMode::ApproveReads,
         mode: None,
+        pi_thinking_level: None,
         permission_mode_pinned: true,
         provider_policy: None,
         system_instructions: "Complete the supplied task.".to_owned(),
@@ -78,6 +79,7 @@ fn identity() -> AcpxProviderSessionIdentity {
         effective_model: "gpt-5.6-sol".to_owned(),
         permission_mode: Some(AcpxPermissionMode::ApproveReads),
         mode: None,
+        pi_thinking_level: None,
         provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
     }
 }

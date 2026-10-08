@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 const CODEX_ACPX_DIGEST: &str =
     "sha256:c4538599d1ab767db5dff50934f13bb5ba313a59d9c4a83e993fac4617ea63d3";
 const PI_ACPX_DIGEST: &str =
-    "sha256:fe1e6da01b2a9e4c691ca27cf689d2d6de846a93be6b23fc1e103c9addd7b177";
+    "sha256:465ae72460f05cae961873f09cd7cd3652dc3a6949930b7ee16303925cd3dd0e";
 
 fn temporary_directory(label: &str) -> PathBuf {
     let nonce = SystemTime::now()
@@ -1397,11 +1397,133 @@ fn pi_thinking_change_cannot_attach_to_an_existing_provider_identity() {
         let error = executor
             .execute(&command(3 + index as u64, "run.attach", changed))
             .unwrap_err();
-        assert!(error
-            .to_string()
-            .contains("immutable_provider_identity_changed"));
+        assert!(
+            error
+                .to_string()
+                .contains("requires the same settled ACPX provider profile and session"),
+            "unexpected thinking identity rejection: {error}"
+        );
         assert_eq!(fs::read(&state_path).unwrap(), prior);
     }
+    executor
+        .execute(&command(6, "run.attach", payload))
+        .unwrap();
+    executor.shutdown().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn stops_an_idle_pi_provider_before_suspension_without_waiting_for_its_close_rpc() {
+    let directory = temporary_directory("pi-idle-suspension");
+    let mut config = pi_acpx_config(&directory, "bootstrap");
+    config
+        .acpx_launch_profile
+        .as_mut()
+        .unwrap()
+        .args
+        .extend(["--suspend-delay-ms".to_owned(), "8000".to_owned()]);
+    let mut payload = pi_prepare_payload(&directory, "bootstrap");
+    payload["provider"]["sidecarArgs"] = json!(config.acpx_launch_profile.as_ref().unwrap().args);
+    let mut executor = NativeProviderCommandExecutor::with_runner_config(&directory, &config);
+    executor
+        .execute(&command(1, "run.prepare", payload))
+        .unwrap();
+    executor
+        .execute(&command(2, "session.open", json!({})))
+        .unwrap();
+    let state_path = directory.join("acpx-provider-state.json");
+    let opened: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let started = std::time::Instant::now();
+    let stopped = executor
+        .execute(&command(3, "turn.stop", json!({})))
+        .unwrap();
+    executor
+        .execute(&command(4, "runner.drain", json!({})))
+        .unwrap();
+    executor
+        .execute(&command(5, "runner.suspend", json!({})))
+        .unwrap();
+    let suspended: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let elapsed = started.elapsed();
+    executor.shutdown().unwrap();
+    fs::remove_dir_all(directory).unwrap();
+
+    assert_eq!(stopped.result["status"], "stopped");
+    assert_eq!(stopped.result["providerExitConfirmed"], true);
+    assert!(
+        elapsed < Duration::from_secs(3),
+        "idle close took {elapsed:?}"
+    );
+    assert_eq!(suspended["lifecycle"], "suspended");
+    assert_eq!(suspended["providerExitUnconfirmed"], false);
+    assert_eq!(suspended["identity"], opened["identity"]);
+    assert_eq!(suspended["activeProviderTurnId"], Value::Null);
+}
+
+#[test]
+fn idle_pi_stop_cannot_publish_a_reusable_identity_while_its_lifetime_fence_is_held() {
+    let directory = temporary_directory("pi-idle-held-lifetime");
+    // Linux can assign port 0 below the identity contract's dynamic-port range.
+    // Keep this fixture distinct from the fake sidecar's default fence ports.
+    let fence = (61_000..=u16::MAX)
+        .filter_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok())
+        .take(3)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        fence.len(),
+        3,
+        "three valid lifetime fence ports are required"
+    );
+    let ports = fence
+        .iter()
+        .map(|listener| listener.local_addr().unwrap().port().to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut config = pi_acpx_config(&directory, "bootstrap");
+    config
+        .acpx_launch_profile
+        .as_mut()
+        .unwrap()
+        .args
+        .extend(["--lifetime-fence-ports".to_owned(), ports]);
+    let mut payload = pi_prepare_payload(&directory, "bootstrap");
+    payload["provider"]["sidecarArgs"] = json!(config.acpx_launch_profile.as_ref().unwrap().args);
+    let mut executor = NativeProviderCommandExecutor::with_runner_config(&directory, &config);
+    executor
+        .execute(&command(1, "run.prepare", payload))
+        .unwrap();
+    executor
+        .execute(&command(2, "session.open", json!({})))
+        .unwrap();
+    let state_path = directory.join("acpx-provider-state.json");
+    let opened: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    let error = executor
+        .execute(&command(3, "turn.stop", json!({})))
+        .unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("original provider lifetime remains active"));
+    let stopped: Value = serde_json::from_slice(&fs::read(&state_path).unwrap()).unwrap();
+    assert_eq!(stopped["lifecycle"], "prepared");
+    assert_eq!(stopped["providerExitUnconfirmed"], true);
+    assert_eq!(stopped["identity"], opened["identity"]);
+    assert!(
+        executor
+            .execute(&command(4, "runner.suspend", json!({})))
+            .is_err(),
+        "unconfirmed lifetime cannot produce a suspension receipt"
+    );
+    let before_poll = fs::read(&state_path).unwrap();
+    assert!(
+        executor.poll_events().unwrap().is_empty(),
+        "held lifetime cannot publish a resumed provider"
+    );
+    assert_eq!(
+        fs::read(&state_path).unwrap(),
+        before_poll,
+        "polling cannot erase the unconfirmed lifetime boundary"
+    );
+    drop(fence);
     executor.shutdown().unwrap();
     fs::remove_dir_all(directory).unwrap();
 }

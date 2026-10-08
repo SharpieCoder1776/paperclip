@@ -912,6 +912,35 @@ describe("MarkdownEditor", () => {
     });
   });
 
+  it("handles Markdown paste once before the inner editor receives it", async () => {
+    const root = createRoot(container);
+    await act(async () => {
+      root.render(<MarkdownEditor value="" onChange={() => {}} />);
+    });
+    await flush();
+    const editable = container.querySelector('[data-testid="mdx-editor"]')!;
+    const innerPaste = vi.fn();
+    editable.addEventListener("paste", innerPaste);
+    const pasted = '```json\n{"content":"nonce\\n"}\n```';
+    const event = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", {
+      value: { types: ["text/plain"], getData: () => pasted },
+    });
+    await act(async () => { editable.dispatchEvent(event); });
+    expect(event.defaultPrevented).toBe(true);
+    expect(mdxEditorMockState.insertedMarkdownValues).toEqual([pasted]);
+    expect(innerPaste).not.toHaveBeenCalled();
+
+    const plain = new Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(plain, "clipboardData", {
+      value: { types: ["text/plain"], getData: () => "ordinary text" },
+    });
+    await act(async () => { editable.dispatchEvent(plain); });
+    expect(plain.defaultPrevented).toBe(false);
+    expect(innerPaste).toHaveBeenCalledOnce();
+    await act(async () => { root.unmount(); });
+  });
+
   it("escapes angle brackets in pasted markdown", async () => {
     const root = createRoot(container);
 

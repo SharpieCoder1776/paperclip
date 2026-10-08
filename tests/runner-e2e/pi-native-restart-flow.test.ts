@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { expect, it, vi } from "vitest";
 import { gradePiRestartCompletion, observePiRestartPending, runPiPendingControllerRestart } from "./pi-native-restart-flow.js";
 import { validatePrpStructuredRunResult } from "../../packages/paperclip-runner/src/protocol/replay-contract.js";
@@ -17,7 +18,7 @@ function fixture(adapter = "acpx-runtime-sidecar") {
       normalizedSessionId: "session", sourceInstanceId: "runner", sourceSeq, sourceEventId: `runner:run:${sourceSeq}`, payload } },
   });
   const state = { issue: { id: "issue", companyId: "company", status: "in_progress" },
-    runs: [{ id: "run", companyId: "company", nativeIssueId: "issue", runtimeMode: "native", status: "running", nativeSessionId: "session", runnerInstanceId: "runner" } as Row],
+    runs: [{ id: "run", companyId: "company", nativeIssueId: "issue", runtimeMode: "native", status: "running", nativeSessionId: "session", runnerInstanceId: "runner", processPid: 200, processGroupId: 200, processStartedAt: "2026-10-02T13:55:27.000Z" } as Row],
     interactions: [{ id: "interaction", companyId: "company", issueId: "issue", kind: "ask_user_questions", status: "pending", result: null,
       sourceRunId: "run", continuationPolicy: "none", resolverPolicy: "human_only", idempotencyKey: "paperclip-runner-question:run:request",
       payload: { runtimeRequestId: "request", questionSet } } as Row] };
@@ -48,6 +49,56 @@ function fixture(adapter = "acpx-runtime-sidecar") {
 it.each(["acpx-runtime", "acpx-runtime-sidecar"])("accepts mixed runner/control-plane production completion via %s", adapter => {
   const f = fixture(adapter), pending = observePiRestartPending(f.state, f.events, "company"), proof = f.finish();
   expect(gradePiRestartCompletion(f.state, f.events, pending, "hidden", proof)).toBe(true);
+});
+
+function actualPendingPrefix() {
+  return JSON.parse(readFileSync(new URL("./fixtures/pi-native-restart-actual-prefix.json", import.meta.url), "utf8")) as {
+    state: { issue: Row; runs: Row[]; interactions: Row[] }; events: Row[];
+  };
+}
+
+it.each(["omitted", "null"])("accepts the actual pre-start submission with %s turn ID", representation => {
+  const f = actualPendingPrefix();
+  if (representation === "null") f.events[0]!.payload.prpEvent.turnId = null;
+  expect(observePiRestartPending(f.state, f.events, "company")).toMatchObject({
+    runId: "run", turnId: "turn", nativeSessionId: "session", sourceInstanceId: "runner", createdSourceSeq: 195,
+  });
+});
+
+it.each([
+  ["missing start", (f: ReturnType<typeof actualPendingPrefix>) => { f.events.splice(1, 1); }],
+  ["start without assigned turn", (f: ReturnType<typeof actualPendingPrefix>) => { delete f.events[1]!.payload.prpEvent.turnId; }],
+  ["start with foreign turn", (f: ReturnType<typeof actualPendingPrefix>) => { f.events[1]!.payload.prpEvent.turnId = "other"; }],
+  ["foreign submission turn", (f: ReturnType<typeof actualPendingPrefix>) => { f.events[0]!.payload.prpEvent.turnId = "other"; }],
+  ["foreign submission session", (f: ReturnType<typeof actualPendingPrefix>) => { f.events[0]!.payload.prpEvent.normalizedSessionId = "other"; }],
+  ["foreign submission producer", (f: ReturnType<typeof actualPendingPrefix>) => {
+    Object.assign(f.events[0]!.payload.prpEvent, { sourceInstanceId: "other", sourceEventId: "other:run:6" });
+  }],
+  ["submission after start", (f: ReturnType<typeof actualPendingPrefix>) => {
+    f.events[0]!.seq = 29;
+    Object.assign(f.events[0]!.payload.prpEvent, { sourceSeq: 8, sourceEventId: "runner:run:8" });
+  }],
+  ["start after request", (f: ReturnType<typeof actualPendingPrefix>) => {
+    f.events[1]!.seq = 223;
+    Object.assign(f.events[1]!.payload.prpEvent, { sourceSeq: 196, sourceEventId: "runner:run:196" });
+  }],
+  ["duplicate submission", (f: ReturnType<typeof actualPendingPrefix>) => {
+    const row = structuredClone(f.events[0]!); row.seq = 26;
+    Object.assign(row.payload.prpEvent, { sourceSeq: 7, sourceEventId: "runner:run:7" });
+    Object.assign(f.events[1]!.payload.prpEvent, { sourceSeq: 8, sourceEventId: "runner:run:8" });
+    f.events.push(row);
+  }],
+  ["duplicate start", (f: ReturnType<typeof actualPendingPrefix>) => {
+    const row = structuredClone(f.events[1]!); row.seq = 29;
+    Object.assign(row.payload.prpEvent, { sourceSeq: 8, sourceEventId: "runner:run:8" }); f.events.push(row);
+  }],
+  ["later unbound turn event", (f: ReturnType<typeof actualPendingPrefix>) => {
+    const row = structuredClone(f.events[1]!); row.seq = 29; row.eventType = "turn.progress";
+    Object.assign(row.payload.prpEvent, { eventType: "turn.progress", turnId: null, sourceSeq: 8, sourceEventId: "runner:run:8" }); f.events.push(row);
+  }],
+] as const)("rejects %s around an unbound submission", (_label, mutate) => {
+  const f = actualPendingPrefix(); mutate(f);
+  expect(() => observePiRestartPending(f.state, f.events, "company")).toThrow("Pi native restart");
 });
 
 it.each([
@@ -113,16 +164,20 @@ it.each([null, {}, { status: "answered", value: "guess" }, { status: "cancelled"
   },
 );
 
-async function flow(failure?: "replaced" | "wrong-file" | "missing-resolution") {
+async function flow(failure?: "replaced" | "wrong-file" | "missing-resolution" | "replaced-runner", issueRef = "issue") {
   const f = fixture(), evidence = new Map<string, any>(), checkpoints: string[] = [];
+  Object.assign(f.state.issue, { identifier: "RUN-1" });
   let answer = "", restarts = 0, submissions = 0, proof: unknown, resolvePost: ((value: unknown) => void) | undefined;
   let postPredicate: ((value: any) => boolean) | undefined;
   const composer: any = { count: () => 1, filter: () => composer, locator: () => composer, first: () => composer,
     fill: async (value: string) => { expect(restarts).toBe(1); answer = value; } };
   const button: any = { count: () => 1, filter: () => button, click: async () => {
     expect(restarts).toBe(1); expect(answer).toMatch(/^PI-RESTART-[a-f0-9]{32}$/); submissions++;
-    const request = { url: () => "http://fixture/api/issues/issue/interactions/interaction/respond", method: () => "POST",
+    const request = { url: () => `http://fixture/api/issues/${issueRef}/interactions/interaction/respond`, method: () => "POST",
       postDataJSON: () => ({ answers: [{ questionId: "answer", optionIds: [], otherText: answer }] }) };
+    expect(postPredicate!({ ...request, url: () => "http://fixture/api/issues/OTHER-1/interactions/interaction/respond" })).toBe(false);
+    expect(postPredicate!({ ...request, url: () => `http://fixture/api/issues/${issueRef}/interactions/other/respond` })).toBe(false);
+    expect(postPredicate!({ ...request, method: () => "GET" })).toBe(false);
     expect(postPredicate!(request)).toBe(true); resolvePost!(request); proof = f.finish(answer);
     if (failure === "missing-resolution") f.events.splice(1, 1);
   } };
@@ -130,23 +185,25 @@ async function flow(failure?: "replaced" | "wrong-file" | "missing-resolution") 
     waitForRequest: (predicate: (value: any) => boolean) => { postPredicate = predicate; return new Promise(resolve => { resolvePost = resolve; }); } };
   const result = runPiPendingControllerRestart({ page, companyId: "company", deadlineAt: Date.now() + 1000,
     load: async () => structuredClone(f.state), events: async () => structuredClone(f.events),
-    restart: async () => {
+    restart: async identity => {
+      expect(identity).toEqual({ processPid: 200, processGroupId: 200, processStartedAt: "2026-10-02T13:55:27.000Z" });
       expect(submissions).toBe(0); expect(f.state.runs[0]!.status).toBe("running"); expect(f.state.interactions[0]!.status).toBe("pending");
       expect(answer).toBe(""); restarts++; checkpoints.push("restart");
       if (failure === "replaced") f.state.interactions[0]!.id = "replacement";
+      if (failure === "replaced-runner") f.state.runs[0]!.processPid = f.state.runs[0]!.processGroupId = 201;
     },
     settle: async () => structuredClone(f.state), readProof: async () => failure === "wrong-file" ? { status: "answered", value: "guess" } : proof,
     capture: async id => { checkpoints.push(id); }, evidence: async (name, data) => { evidence.set(name, structuredClone(data)); },
   });
   if (failure) await expect(result).rejects.toThrow("Pi native restart");
   else expect((await result).every(check => check.passed)).toBe(true);
-  expect(restarts).toBe(1); expect(submissions).toBe(failure === "replaced" ? 0 : 1);
+  expect(restarts).toBe(1); expect(submissions).toBe(["replaced", "replaced-runner"].includes(failure ?? "") ? 0 : 1);
   expect(checkpoints.slice(0, 3)).toEqual(["pi-restart-pending", "restart", "reload"]);
   expect(evidence.has("pi-native-restart-before.json")).toBe(true);
   expect(evidence.has("pi-native-restart-after.json")).toBe(true);
   expect(evidence.has("pi-native-restart-checks.json")).toBe(true);
   expect(JSON.stringify(evidence.get("pi-native-restart-before.json"))).not.toContain("PI-RESTART-");
-  if (failure !== "replaced") expect(evidence.has("pi-native-restart-final.json")).toBe(true);
+  if (!["replaced", "replaced-runner"].includes(failure ?? "")) expect(evidence.has("pi-native-restart-final.json")).toBe(true);
 }
-it("restarts while unanswered, reloads, then submits hidden text through the exact browser route", () => flow());
-it.each(["replaced", "wrong-file", "missing-resolution"] as const)("retains evidence and fails whole flow on %s", failure => flow(failure));
+it.each(["issue", "RUN-1"])("restarts while unanswered and submits through the exact %s browser route", issueRef => flow(undefined, issueRef));
+it.each(["replaced", "wrong-file", "missing-resolution", "replaced-runner"] as const)("retains evidence and fails whole flow on %s", failure => flow(failure));

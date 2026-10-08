@@ -31,6 +31,26 @@ profile, model qualification, environment, task, or ranking-snapshot change
 must change that fingerprint automatically so the dashboard can annotate the
 boundary instead of silently joining unlike totals.
 
+Pi native definition 21 supplies one ordinary JSON write with the nonce followed
+by exactly one LF, then asks for a complete native read. The independently
+checked outcome remains 33 bytes, saved through the public managed-file API
+and copied into a fresh task after controller restart. Missing LF, extra LF,
+literal escapes, CRLF and stale values all fail. The cross-root denial, protected
+parent seed, permissions, deadlines and zero automatic retries remain required.
+Both runs also require a completed, untruncated native-read receipt containing
+the exact memory text and a withheld private-root target, and reject shell
+execution. Named workspace reads and unrelated/bootstrap text cannot substitute;
+Remote observer admission keeps the owned-run and active-lease checks. Its
+existing readiness RPC verifies the pinned native daemon before installation;
+legacy executionStage can remain preparing for a native run. Readiness and case
+deadlines remain unchanged.
+The first Sonnet measurement passed the byte/restart checks but used a shell read
+in the fresh task. Its original grade remains preserved.
+The user approved Sonnet 4.6 through OpenRouter as the explicit Pi qualification
+model; production model selection stays caller-controlled. Earlier DeepSeek
+attempts and their fingerprints remain historical evidence and do not qualify
+this new model/fixture combination.
+
 The explicit [stock-harness suite](STOCK-HARNESS.md) wraps existing profiles with
 `productionDefaultHireProfile`: omit only `instructionsBundle` so the public
 hire route loads the shipped default, while preserving runtime, permissions,
@@ -139,6 +159,14 @@ a deletion through public file APIs. Native turns 2 and 3 must copy/hash only th
 changed memory file, with a saved receipt and the same provider PID. Journal and
 Git stress fixtures retain fixed external bundles as controls. Keep the stable-PID
 oracle strict; `instruction-persistence` also covers cold restarts and quota handling.
+The explicit `rich-acp-warm-continuity` fixture uses the workspace-only prompt:
+ACP providers retain their unchanged AGENT_HOME and must preserve the same native
+session, runner instance, provider session, PID, and process start fingerprint.
+It does not request personal-file edits, because changed ACP agent files require
+provider retirement before collection. Pi's separate `agent-files-fresh-run`
+case retains changed-home save and fresh-task restoration coverage. This split
+does not weaken the stable-process oracle or change the Codex checkpoint fixture.
+
 Native turns 1 and 2 include an actionable human review in the completion report's `attentionRequests`. Paperclip creates the review gate from that report. An explicit question-tool wait yields the turn and suppresses its final prose, so it is not interchangeable with this completion-review fixture. Turn 3 reports Done without another review.
 
 Every selected case runs in its own isolated Paperclip process, and independent
@@ -311,6 +339,13 @@ is explicit-only. No private control-plane hooks or direct database writes are u
 
 ## Pi native boundaries
 
+Definition 23 and Pi controls definition 10 confirm `/proc/<pid>` absence
+separately when a proc read fails during Linux process exit. An existing
+unreadable process, an unreadable absence check, identity drift, and incomplete
+terminal evidence still fail. The observer retains closed causes for process
+reads, stat shape, runtime binding and terminal sealing; it never retains raw
+process arguments. Historical failed receipts remain failed.
+
 The explicit-only `pi-native` suite has five local and four Daytona candidate
 cells, with no automatic retries. The remote suite excludes automatic deny-all
 because its initial native file read is itself denied. `native-questions` answers the real runner-owned Pi select, confirm, input
@@ -319,8 +354,13 @@ Undisclosed text and independent workspace JSON prove delivery to the same live 
 Pi's SDK cannot distinguish negative confirmation from dismissal; the expected
 result is explicitly `negative_or_cancelled`, not proof of cancellation.
 
-`agent-files-fresh-run` writes a hidden nonce through native file tools to the
-registered AGENT_HOME, requires a stopped-run save receipt and public managed-file
+`agent-files-fresh-run` supplies one native write argument object whose content
+is the hidden nonce plus exactly one final LF. The agent replaces only the
+AGENT_HOME prefix in the supplied path; it preserves the JSON newline escape in
+the content argument, then reads the complete file once. A missing LF, literal
+backslash-and-n, repeated write, or claimed success cannot satisfy the independent
+byte oracle. The flow uses native file tools in the registered AGENT_HOME,
+requires a stopped-run save receipt and public managed-file
 readback, then restarts the server and verifies exact bytes from a fresh task. An
 attempted write to an unassigned isolated sibling path must fail without creating
 a file. `restrictive-denial` requires a correlated failed native write and absent
@@ -334,20 +374,40 @@ no database writes, private hooks, or fabricated provider results are allowed.
 `native-pending-controller-restart` restarts the public controller while one Pi
 input callback remains unanswered. It requires the same durable interaction,
 request, live run, native session, turn and producer before and after restart.
+For local execution, the public run's exact PID, process group and start identity
+must identify an already-observed durable runner under this controller. The test
+preserves only that runner tree during restart, checks the same live identity
+afterward, and keeps the old process owner for complete final cleanup alongside
+the replacement controller. Other controller children are retired normally.
+Remote execution does not infer local process authority from remote PIDs.
 Only then does the browser submit previously undisclosed text. One durable
 resolution, one original successful turn and independently read exact workspace
 JSON prove delivery. A replacement run, replay, cancellation, expiry, rewritten
 request or merely reloaded browser cannot pass. Full states and PRP identities
 stay in private snapshots under the existing publication allowlist.
+The local runner's unique `turn.submitted` receipt may precede assignment of the
+provider turn ID. The oracle accepts that missing ID only before the single
+matching `turn.started` and request creation, with the same session and producer
+and increasing durable/source sequence numbers. Later missing or changed turn
+identities still fail.
 
 ### Pi file editing and registered artifacts
 
 Pi's `extended-harnesses/file-edit-validate` seeds exact bytes before startup and
-requires one native edit lifecycle followed by a successful native bash execution
-with the exact nonce-bound byte-validation command as its projected title and a
-validation marker. A marker-only echo cannot pass. Independent final bytes must
-match the fixture. The
-real `register_deliverable` receipt, attachment metadata, publication activity,
+requires one native edit lifecycle followed by exactly one successful native
+bash execution with the exact nonce-bound byte-validation command as its
+projected title and a validation marker. A marker-only echo cannot pass. Final bytes must
+match the fixture. The Pi task prompt explicitly forbids additional shell calls,
+including metadata commands and repair attempts. It supplies the expected post-edit
+byte size and hash for registration. Extended definition 5 places the exact command in a
+fenced Bash block so the production Markdown editor preserves its operators and
+literal escapes. Definition 4's escaped-paragraph attempt keeps its failed grade.
+Extra Bash calls fail the unchanged oracle even when the
+edited file and downloadable artifact are correct. Extended definition 4 makes
+Pi's artifact title equal the exact filename required by the shared registered
+artifact check. Definition 3 attempts retain their original definitions and
+grades; its Pi prompt requested a different title. The real
+`register_deliverable` receipt, attachment metadata, publication activity,
 visible task attachment and authenticated public download must all agree on the
 file's bytes, hash, company, issue, agent and originating run. A file on disk or a
 model completion claim cannot substitute for publication. Daytona additionally
@@ -383,6 +443,40 @@ ancestry and fresh PID/start-time checks. Pi overwrites Linux argv via
 `process.title`, so the private receipt explicitly uses pinned-parent entrypoint
 attribution and never claims original child argv. A pidfd targets only that child;
 worker death, broad process-name matching and controller Stop cannot substitute.
+The production bootstrap may name its held executable as `/proc/self/fd/3`
+or `/proc/self/fd/7` in the wrapper argv. That form is admitted only when the
+wrapper's corresponding descriptor and executable both have the exact sealed
+snapshot Node inode. The guard and wrapper entrypoint paths remain exact.
+Missing, foreign or other descriptor numbers fail before signalling.
+Production may also stage the runner executable as a link to the image's
+verified installation. The fault helper reads the resolved regular file, checks
+that the named link remained unchanged, and still requires its pinned hash and
+exact `/proc/<runner-pid>/exe` inode. Link replacement, missing targets and a
+different executable fail admission. Linux calibration covers this installation
+form as well as a copied runner.
+
+The agent-memory fixture requires the nonce's UTF-8 bytes followed by exactly
+one line-feed byte (`0x0A`). Its prompt states that byte contract in plain text
+and provides the exact content as fenced JSON. Fenced task prompts use the rich
+editor's Markdown paste path; filling the editor directly produces escaped
+paragraph text instead of a code block. The issue API preserves literal escapes
+in real multiline bodies and only recovers self-escaped line breaks in legacy
+single-line bodies. Code fences and JSON escapes must survive both boundaries.
+The prompt explicitly states that native write never adds a newline and that
+complete native read preserves one when present. A credential-free probe of the
+installed Pi 1.0.0 tools checks both a 32-byte value and the 33-byte value with a
+final line feed; both write and read retain the exact supplied bytes.
+The prompt orders one memory write, one complete native read, a separate expected
+cross-root write denial, and then completion. Native paths use the exact current
+absolute agent directory; shell-variable expansion is not assumed. An incorrect
+memory result must be reported without claiming success. Native readback and the
+managed-file API must retain the exact bytes across a new task and controller
+restart. The byte graders remain unchanged.
+
+Controller cleanup can admit a replacement group member only when its ancestry
+belongs to a separately revalidated, continuously owned process. A recycled
+numeric group, a changed PID/start identity, or any unowned live member still
+fails cleanup before signaling. This rule is recorded in `pi-native` version 12.
 
 The runtime itself must emit `runtime_request.expired` for the original callback
 with `provider_process_lost` and `replayAllowed:false`, followed by native turn
@@ -403,13 +497,18 @@ macOS runs metadata negatives and explicitly skips this Linux-only calibration.
 That calibration and the earlier fake-Pi wrapper/bridge tests do not count as the
 real paid Product lifecycle proof. This new candidate cell remains unqualified.
 
+The pending-question controller-restart browser matcher accepts only the retained
+issue's UUID or public identifier and the exact retained interaction ID. The UI
+normally posts with the public identifier. Durable request, run, turn, session,
+producer and single-delivery assertions remain required after submission.
+
 ## Pi active controls
 
 The explicit-only `pi-controls` suite adds `pending-permission-stop` and
 `same-turn-steering` on local and Daytona, each with one provider run, a
 120-second active-turn timeout and a 300-second attempt budget. These four
 control cases retain their behavior; the current matrix totals 26 Pi cells.
-Pi 1/profile 12 and coverage revisions intentionally change the affected suite
+Pi 1/profile 13 and coverage revisions intentionally change the affected suite
 fingerprints, so older qualification receipts cannot be reused. Catalog presence and
 deterministic calibration do not constitute paid qualification.
 
@@ -422,6 +521,26 @@ identity mapping. Pi does not emit Cursor/Copilot diagnostic notices; those
 notices are never synthesized. Earlier native reads can provide orientation;
 other native operations cannot substitute for the observed write.
 
+On Daytona, the operator first publishes the setup instruction file after the
+owned observer is armed. If Pi delegates that native read, the fixture approves
+only its exact request through the public API with `accept` (allow once). The
+read must name the published random setup file, complete successfully in the
+same native run/turn/session/source, and leave the file hash unchanged. The
+fixture retains the request, resolution, completed read and both observer
+snapshots. Only the two hash-bound setup permission records are excluded from
+the write-permission count. All native read rows remain in the oracle. Another
+permission, edit, shell command, foreign path or incomplete read cannot receive
+this exemption. The tested write remains unanswered until Stop or browser Deny.
+The production permission policy and all write/retirement assertions stay in
+place. `pi-controls` version 7 and `pi-native` version 5 record this correction;
+older attempt fingerprints and grades remain historical evidence.
+
+Native tool arguments can arrive after the start event. An earlier null target
+is allowed only until the same execution first supplies the exact expected
+path. Missing targets, conflicting paths, another execution's path, or a later
+loss of the proven path fail. The original start and permission rows remain
+bound by retained hashes through control dispatch and settlement.
+
 Stop awaits the pending evidence write and rereads that boundary before sending
 one caller UUID to the public cancel API. It requires the original request's
 normalized cancellation closure, a cancelled terminal, and the same-scope
@@ -432,9 +551,11 @@ Only after cancellation does it attempt a stale **decline**, which must return
 cancelled run and no automatic continuation.
 
 Steering submits a random marker only in a browser comment after the permission
-is pending, then clicks that comment's production Steer button. It records the
-exact public POST's queue/revision/run binding and requires the saved run
-acknowledgment plus the Product facade's same-turn acknowledgment item. The raw
+is pending, binds the queued comment to the exact body submitted by the
+production Markdown editor, then clicks that comment's production Steer button. It records the
+exact public POST's queue/revision/run binding. A rejected public POST ends the
+journey before any denial. Success requires the saved run acknowledgment plus
+the Product facade's same-turn acknowledgment item. The raw
 Rust `acpx-control-*` transport echo is suppressed by the facade;
 `CodexHarnessSession.steer` emits the durable correlated item after the command
 acknowledges. A deterministic calibration invokes that actual producer. The
@@ -730,3 +851,5 @@ as completed and end the native turn; Paperclip must retain a failed run with
 missing semantic finalization and an unfinished task. That is a denial outcome,
 not task success or operator cancellation. Stop during an unresolved permission
 remains a separate `native-active-stop/pending-permission-stop` gate.
+
+Pi controls definition 9 and native definition 16 create an explicit title through the production search creation action and bind the task ID from the public creation response. The scoped task and assignee must match before any native control. Automatic naming is outside these strict native-operation fixtures; all existing permission, byte, process, run-count and cleanup assertions remain required. Preserve the failed title-lookup attempt as its original failure.

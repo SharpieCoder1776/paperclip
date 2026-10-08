@@ -627,9 +627,6 @@ export function parseNativeExecutionInput(value: unknown): NativeExecutionInput 
     if (provider.piThinkingLevel !== undefined && (provider.agent !== "pi" || (typeof provider.piThinkingLevel !== "string" || !["off", "low", "high", "max"].includes(provider.piThinkingLevel)))) {
       throw new NativeExecutionInputError("input.provider.piThinkingLevel must be off, low, high, or max and is supported only for Pi");
     }
-    if (provider.agent === "pi" && record(provider.profile, "input.provider.profile").agentProfileVersion === 13 && provider.piThinkingLevel === undefined) {
-      throw new NativeExecutionInputError("input.provider.piThinkingLevel is required for Pi profile 13");
-    }
     if (provider.mode !== undefined && !isProviderMode(provider.mode)) {
       throw new NativeExecutionInputError("input.provider.mode must be a bounded nonempty provider mode identifier");
     }
@@ -667,6 +664,9 @@ export function parseNativeExecutionInput(value: unknown): NativeExecutionInput 
       || !isSupportedAcpxProfileVersion(provider.agent, profile.agentProfileVersion)
     ) {
       throw new NativeExecutionInputError("input.provider.profile does not match the qualified ACPX v1 profile");
+    }
+    if (provider.agent === "pi" && profile.agentProfileVersion >= 13 && provider.piThinkingLevel === undefined) {
+      throw new NativeExecutionInputError("input.provider.piThinkingLevel is required for Pi profile 13 or later");
     }
     const runtimePackage = nullableText(profile.agentRuntimePackage, "input.provider.profile.agentRuntimePackage");
     const runtimeVersion = nullableText(profile.agentRuntimeVersion, "input.provider.profile.agentRuntimeVersion");

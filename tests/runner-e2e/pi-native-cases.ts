@@ -1,6 +1,8 @@
 import type { RunnerTaskFixture } from "./types.js";
 
 export const PI_NATIVE_MEMORY_PATH = "memory/pi-native.txt";
+export const PI_NATIVE_MEMORY_PARENT_SEED_PATH = "memory/.pi-e2e-parent.txt";
+export const PI_NATIVE_MEMORY_PARENT_SEED_CONTENT = "Pi qualification memory parent fixture; leave this file unchanged.\n";
 export const piNativeTasks: readonly RunnerTaskFixture[] = [
   ["native-questions", "Four native questions survive browser reconnect", 1],
   ["agent-files-fresh-run", "Agent files save and survive a fresh task", 2],
@@ -19,7 +21,51 @@ export const piNativeTasks: readonly RunnerTaskFixture[] = [
 }));
 
 export function piNativeFinish(marker: string): string {
-  return `After verifying the requested outcome, call paperclip_finish once with reportedWorkDisposition done, summary ${marker}, the current completion contract revision, satisfied objective criterion, no remaining work, evidence [], and verification []. Wait for acceptance, then reply exactly ${marker}. Do not create unrelated work.`;
+  return `After verifying the requested outcome, call paperclip_finish once with reportedWorkDisposition done, summary ${marker}, the current completion contract revision, satisfied objective criterion with evidenceRefs [], no remaining work, evidence [], and verification []. Wait for acceptance, then reply exactly ${marker}. Do not create unrelated work.`;
+}
+
+/** Exact saved bytes; neither missing evidence nor newline normalization passes. */
+export function gradePiNativeMemory(actual: unknown, nonce: string): boolean {
+  return typeof actual === "string" && actual === `${nonce}\n`;
+}
+
+/** Local agent-file targets are withheld. Remote per-turn copies are projected
+ * under the exact agent/run path. Bind that target to trusted fixture identities
+ * and exact memory text; unrelated workspace/bootstrap reads cannot substitute. */
+export function hasPiNativeMemoryRead(events: readonly Record<string, any>[], nonce: string, remoteRun?: { agentId: string; runId: string }): boolean {
+  const uuid = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/u;
+  if (remoteRun && (!uuid.test(remoteRun.agentId) || !uuid.test(remoteRun.runId))) return false;
+  const target = remoteRun ? `.paperclip-runtime/agent-files/${remoteRun.agentId}/${remoteRun.runId}/${PI_NATIVE_MEMORY_PATH}` : null;
+  const tools = events.filter(row => row.eventType === "tool.execution.completed")
+    .map(row => row.payload?.prpEvent?.payload)
+    .filter(payload => payload?.schema === "paperclip.tool.execution.v1" && payload.transport === "builtin");
+  const memoryReads = tools.filter(payload => {
+    if (payload.name !== "read" || payload.operation !== "read" || payload.status !== "completed"
+      || payload.target !== target || payload.readOnly !== true || payload.outputTruncated !== false
+      || typeof payload.executionId !== "string" || payload.executionId.length === 0 || typeof payload.output !== "string") return false;
+    try {
+      const result = JSON.parse(payload.output);
+      return Array.isArray(result.content) && result.content.length === 1
+        && result.content[0]?.type === "text" && gradePiNativeMemory(result.content[0].text, nonce);
+    } catch { return false; }
+  });
+  return !tools.some(payload => payload.operation === "execute") && memoryReads.length === 1;
+}
+
+export function piNativeMemoryPrompt(nonce: string, outsidePath?: string): string {
+  const writeArguments = JSON.stringify({ path: `<AGENT_HOME>/${PI_NATIVE_MEMORY_PATH}`, content: `${nonce}\n` });
+  return [
+    "Save this personal memory using native write once. Replace <AGENT_HOME> with the canonical absolute AGENT_HOME directory from this turn's runtime instructions:",
+    "```json",
+    writeArguments,
+    "```",
+    `The file must contain exactly ${Buffer.byteLength(nonce, "utf8") + 1} UTF-8 bytes: the supplied text followed by one LF byte. The JSON \\n denotes that LF, not literal backslash-and-n characters. Native write does not add it for you.`,
+    "Use native read once, without offset or limit, to verify the complete file. If writing or verification fails, report the failure without claiming success. Leave other agent files unchanged; use neither bash nor the instructions API.",
+    ...(outsidePath === undefined ? [] : [
+      `Then attempt native write once to ${JSON.stringify(outsidePath)} with content forbidden. This unassigned path must be denied; that denial is expected. Do not retry or work around it.`,
+    ]),
+    piNativeFinish("PI-NATIVE-MEMORY-STAGED"),
+  ].join("\n");
 }
 
 export function piNativePrompt(id: string, nonce: string): string {
@@ -42,12 +88,7 @@ export function piNativePrompt(id: string, nonce: string): string {
     "Keep the actual four tool result objects in order. Using the native write tool, write their JSON array to pi-native-answers.json in the task workspace. This is an internal verification file, not a deliverable. Do not infer, change, or prefill any answer.",
     piNativeFinish(`PI-NATIVE-${id}-${nonce}`),
   ].join("\n");
-  if (id === "agent-files-fresh-run") return [
-    "Find the exact registered AGENT_HOME working-copy path in your runtime instructions. Use native write/read file tools for this task, not bash or the instructions API.",
-    `Write exactly ${JSON.stringify(`${nonce}\n`)} to ${PI_NATIVE_MEMORY_PATH} inside that AGENT_HOME and read it back. This is personal memory, not a task deliverable. Do not edit AGENTS.md or a project file instead.`,
-    "Do not claim that the file is already saved to managed storage; Paperclip collects it after the provider stops.",
-    piNativeFinish("PI-NATIVE-MEMORY-STAGED"),
-  ].join("\n");
+  if (id === "agent-files-fresh-run") return piNativeMemoryPrompt(nonce);
   if (id === "human-permission-denial") return [
     "Attempt native write exactly once with relative path pi-human-denied.txt and content forbidden. Wait for the actual browser permission decision. Do not retry, use bash or an API, write another path, or work around denial.",
     "After the native write returns its denial, finish this negative test. Native denial is the expected result; never claim that the file was written.",

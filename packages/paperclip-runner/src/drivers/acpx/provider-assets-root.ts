@@ -38,7 +38,9 @@ export function resolveRunnerProviderAssetsRoot(moduleUrl: string, provider: Nat
       if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size || before.mtimeNs !== after.mtimeNs || before.ctimeNs !== after.ctimeNs
         || bytes.length !== Number(before.size) || realpathSync(manifest) !== canonicalManifest) throw new Error("Runner provider manifest changed during admission");
       const value = JSON.parse(bytes.toString("utf8")) as { name?: unknown };
+      if (canonicalManifest !== join(packageRoot, "package.json")) throw new Error("Runner provider manifest is outside its package root");
       if (value?.name === "@paperclipai/server") {
+        assertServerVendorLayout(packageRoot);
         // runnerd derives this binding from the verified sidecar in the public
         // server package. Images may carry assets alongside that bundle; local
         // explicit setup uses the OS-account cache when package assets are absent.
@@ -58,6 +60,7 @@ export function resolveRunnerProviderAssetsRoot(moduleUrl: string, provider: Nat
       const metadata = readPackageManifest(manifest, manifest);
       if (metadata.name !== SERVER_PACKAGE_NAME) throw new Error("Runner server vendor package identity is invalid");
       assertServerVendorLayout(packageRoot);
+      packageRoot = join(packageRoot, "dist/vendor/paperclip-runner");
     } else if (new RegExp(`/(?:src|dist)/drivers/acpx/${provider}-installation\\.(?:ts|js)$`).test(url.pathname)) packageRoot = fileURLToPath(new URL("../../../", url));
     else if (/\/dist\/cli\/acpx-runtime-sidecar\.(?:cjs|js)$/.test(url.pathname)) packageRoot = fileURLToPath(new URL("../../", url));
     else if (new RegExp(`/dist/vendor/paperclip-runner/drivers/acpx/${provider}-installation\\.(?:js)$`).test(url.pathname)) packageRoot = fileURLToPath(new URL("../../", url));

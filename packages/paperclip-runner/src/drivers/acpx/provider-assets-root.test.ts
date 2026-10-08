@@ -7,7 +7,7 @@ import { resolveRunnerProviderAssetsRoot } from "./provider-assets-root.js";
 
 const roots: string[] = [];
 afterEach(async () => { vi.unstubAllEnvs(); await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
-async function root() { const path = await mkdtemp(join(tmpdir(), "runner-provider-assets-")); roots.push(path); return path; }
+async function root() { const path = await realpath(await mkdtemp(join(tmpdir(), "runner-provider-assets-"))); roots.push(path); return path; }
 
 it("uses one fixed provider directory for source, compiled and bundled runner layouts", async () => {
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT", undefined);
@@ -34,7 +34,8 @@ it("resolves descriptor sidecars only through the runner-bound canonical package
 it("resolves the public server bundle without repository paths or candidate overrides", async () => {
   const path = await root();
   const vendored = join(await realpath(path), "dist/vendor/paperclip-runner");
-  await mkdir(vendored, { recursive: true });
+  await mkdir(join(vendored, "cli"), { recursive: true });
+  await writeFile(join(vendored, "cli/acpx-runtime-sidecar.cjs"), "// bundled sidecar");
   await writeFile(join(path, "package.json"), JSON.stringify({ name: "@paperclipai/server" }));
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT", path);
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST", join(path, "package.json"));
@@ -53,7 +54,7 @@ it("rejects a server bundle redirected outside its published package", async () 
   await writeFile(join(path, "package.json"), JSON.stringify({ name: "@paperclipai/server" }));
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT", path);
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST", join(path, "package.json"));
-  expect(() => resolveRunnerProviderAssetsRoot("file:///proc/self/fd/18", "cursor")).toThrow("contained");
+  expect(() => resolveRunnerProviderAssetsRoot("file:///proc/self/fd/18", "cursor")).toThrow("escaped");
 });
 
 it("rejects external manifests, links, asset escapes and incomplete authority", async () => {
@@ -83,10 +84,10 @@ it("admits the public server's exact vendored layout for readiness and descripto
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST", undefined);
   const path = await serverFixture();
   const url = pathToFileURL(join(path, "dist/vendor/paperclip-runner/drivers/acpx/pi-installation.js")).href;
-  expect(resolveRunnerProviderAssetsRoot(url, "pi")).toBe(join(path, "provider-assets/pi"));
+  expect(resolveRunnerProviderAssetsRoot(url, "pi")).toBe(join(path, "dist/vendor/paperclip-runner/provider-assets/pi"));
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_ROOT", path);
   vi.stubEnv("PAPERCLIP_ACPX_PROVIDER_PACKAGE_MANIFEST", join(path, "package.json"));
-  expect(resolveRunnerProviderAssetsRoot("file:///proc/self/fd/18", "pi")).toBe(join(path, "provider-assets/pi"));
+  expect(resolveRunnerProviderAssetsRoot("file:///proc/self/fd/18", "pi")).toBe(join(path, "dist/vendor/paperclip-runner/provider-assets/pi"));
 });
 it("rejects an unrelated server manifest, escaped vendor sidecar and linked manifest", async () => {
   const path = await serverFixture(); const outside = await root();

@@ -1,5 +1,5 @@
-import { resolvePiThinkingLevel } from "./pi-thinking.js";
 import { parseProviderMode } from "../../contracts/provider-mode.js";
+import { resolvePiThinkingLevel, type PiThinkingLevel } from "./pi-thinking.js";
 import { createHash } from "node:crypto";
 import { realpath, stat } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
@@ -22,7 +22,7 @@ export interface AcpxRecoveryBinding {
   effectiveModel: string;
   permissionMode: NativeAcpxPermissionMode;
   mode?: string;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
+  piThinkingLevel?: PiThinkingLevel;
   profileSessionKey: string;
 }
 
@@ -38,7 +38,7 @@ export interface AcpxIdentityRecord {
   effectiveModel: string;
   permissionMode: NativeAcpxPermissionMode;
   mode?: string;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
+  piThinkingLevel?: PiThinkingLevel;
   providerLifetimeFenceCandidates: readonly [number, number, number];
 }
 
@@ -50,7 +50,8 @@ export async function createAcpxRecoveryBinding(input: {
   requestedModel: string;
   permissionMode: NativeAcpxPermissionMode;
   mode?: string;
-  piThinkingLevel?: "off" | "low" | "high" | "max";
+  piThinkingLevel?: PiThinkingLevel;
+  providerConfigurationDigest?: string;
   providerPolicy?: { readOnly: boolean; readRoots?: readonly string[]; protectedPaths?: readonly string[] };
 }): Promise<AcpxRecoveryBinding> {
   validateIdentity(input.normalizedSessionId, "normalized session");
@@ -63,6 +64,7 @@ export async function createAcpxRecoveryBinding(input: {
   if (!isDigest(input.profile.commandDigest)) {
     throw new Error("ACPX recovery profile command digest is invalid");
   }
+  if (input.providerConfigurationDigest !== undefined && !isDigest(input.providerConfigurationDigest)) throw new Error("Invalid provider configuration digest");
   const workspacePath = await resolveWorkspace(input.workingDirectory);
   const workspaceDigest = digest(workspacePath);
   const runtimeRoot = await resolveAcpxRuntimeRoot(
@@ -84,6 +86,7 @@ export async function createAcpxRecoveryBinding(input: {
       qualificationModel: input.profile.qualificationModel,
       reportedModelId: input.profile.reportedModelId,
       permissionPolicy: input.profile.permissionPolicy,
+      ...(input.providerConfigurationDigest === undefined ? {} : { providerConfigurationDigest: input.providerConfigurationDigest }),
       ...(input.providerPolicy === undefined ? {} : { executionPolicy: {
         readOnly: input.providerPolicy.readOnly,
         readRoots: input.providerPolicy.readRoots ?? [],
@@ -100,7 +103,7 @@ export async function createAcpxRecoveryBinding(input: {
       profileDigest,
       permissionMode: input.permissionMode,
       ...(mode ? { mode } : {}),
-    ...(piThinkingLevel ? { piThinkingLevel } : {}),
+      ...(piThinkingLevel ? { piThinkingLevel } : {}),
     }),
   ).replace("sha256:", "paperclip-");
   return {
@@ -114,7 +117,7 @@ export async function createAcpxRecoveryBinding(input: {
     effectiveModel: input.requestedModel,
     permissionMode: input.permissionMode,
     ...(mode ? { mode } : {}),
-    ...(piThinkingLevel ? { piThinkingLevel } : {}),
+      ...(piThinkingLevel ? { piThinkingLevel } : {}),
     profileSessionKey,
   };
 }

@@ -17,8 +17,7 @@ import {
   setOverridePaused,
 } from "../adapters/registry.js";
 
-vi.mock("../vendor/paperclip-runner/index.js", async (importOriginal) => ({
-  ...await importOriginal<typeof import("../vendor/paperclip-runner/index.js")>(),
+vi.mock("@paperclipai/paperclip-runner/live", () => ({
   probeAcpxClaudeInstallation: vi.fn(async () => undefined),
   probeAcpxGrokInstallation: vi.fn(async () => undefined),
   probeAcpxCursorInstallation: vi.fn(async () => undefined),

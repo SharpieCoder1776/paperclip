@@ -231,7 +231,7 @@ describe("buildPaperclipRunnerConfig", () => {
     expect(config).not.toHaveProperty("acpxAgent");
   });
 
-  it.each(["pi", "copilot"])("rejects unavailable ACPX %s without selecting another provider", (acpxAgent) => {
+  it.each(["copilot"])("rejects unavailable ACPX %s without selecting another provider", (acpxAgent) => {
     expect(() => buildPaperclipRunnerConfig(makeValues({
       adapterType: "paperclip_runner",
       model: "explicit-provider-model",

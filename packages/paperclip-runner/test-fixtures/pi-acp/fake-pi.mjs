@@ -96,7 +96,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (request.type === "steer") { response(inputDisposition); if (inputDisposition.disposition !== "queued") return; output({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: `steered:${request.message}` } }); return; }
   if (request.type === "follow_up") { response(inputDisposition); if (inputDisposition.disposition !== "queued") return; finish(`follow-up:${request.message}`); return; }
   if (request.type === "compact") { output({ type: "compaction_start", reason: "manual" }); const result = compaction(); output({ type: "compaction_end", reason: "manual", result, aborted: false, willRetry: false }); response(result); return; }
-  if (request.type === "abort") { response(); if (active) { active = false; if (assistantActive) endMessage("aborted", {}); output({ type: "turn_end" }); output({ type: "agent_settled" }); } return; }
+  if (request.type === "abort") { response(); if (active) { active = false; if (assistantActive) endMessage(process.env.PI_FIXTURE_CANCEL_ERROR === "1" ? "error" : "aborted", process.env.PI_FIXTURE_CANCEL_ERROR === "1" ? { input: 11, output: 3 } : {}); output({ type: "turn_end" }); output({ type: "agent_settled" }); } return; }
   if (request.type === "prompt") {
     response({ disposition: "started" }); active = true; output({ type: "agent_start" });
     if (request.message === "missing-message-start") { modelIteration++; output({ type: "turn_start" }); output({ type: "message_update", assistantMessageEvent: { type: "text_delta", delta: "invalid" } }); return; }

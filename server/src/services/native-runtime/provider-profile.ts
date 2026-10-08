@@ -30,6 +30,7 @@ export const DEFAULT_ACPX_RUNNER_MODELS = {
   // These profiles require explicit configuration. Admission belongs to the runner.
   codex: null,
   cursor: null,
+  pi: null,
 } as const;
 
 export type QualifiedPaperclipRunnerAcpxAgent =
@@ -378,7 +379,7 @@ export function resolvePaperclipRunnerProviderProfile(
     resolvePaperclipRunnerCursorMode(candidate, config.acpxAgent, config.acpxSessionMode);
   } catch (error) {
     throw new PaperclipRunnerProviderProfileError(
-      "paperclip_runner_cursor_mode_invalid",
+      "paperclip_runner_mode_invalid",
       error instanceof Error ? error.message : "Invalid Cursor session mode",
     );
   }
@@ -491,10 +492,10 @@ export function resolvePaperclipRunnerProviderProfile(
     }
     throw new PaperclipRunnerProviderProfileError("paperclip_runner_acpx_agent_unavailable", `${pendingAcpxProfile.label} is awaiting local and Daytona qualification. Its profile is not enabled for production runs.`);
   }
-  if (acpxAgent === "cursor" && !model) {
-    throw new PaperclipRunnerProviderProfileError("paperclip_runner_acpx_model_required", "Cursor requires an explicit model ID; there is no default model.");
+  if ((acpxAgent === "cursor" || acpxAgent === "pi") && !model) {
+    throw new PaperclipRunnerProviderProfileError("paperclip_runner_acpx_model_required", "This ACPX agent requires an explicit model ID; there is no default model.");
   }
-  if (acpxAgent !== "claude" && acpxAgent !== "codex" && acpxAgent !== "grok" && acpxAgent !== "cursor") {
+  if (acpxAgent !== "claude" && acpxAgent !== "codex" && acpxAgent !== "grok" && acpxAgent !== "cursor" && acpxAgent !== "pi") {
     throw new PaperclipRunnerProviderProfileError(
       "paperclip_runner_acpx_agent_unavailable",
       "Paperclip Runner ACPX requires a qualified agent profile.",

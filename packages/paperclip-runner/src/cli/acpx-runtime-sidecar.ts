@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { parseProviderMode } from "../contracts/provider-mode.js";
 import { acpxProfileActivity, type AcpxActivityAdapter, type AcpxToolEvidence } from "../drivers/acpx/profile-activity.js";
+
+import { resolvePiThinkingLevel } from "../drivers/acpx/pi-thinking.js";
 import { createHash } from "node:crypto";
 import { createInterface } from "node:readline";
 import { deliverAcpxResponse, requireAcpxResponseDelivery } from "../drivers/acpx/response-delivery.js";
@@ -387,6 +388,7 @@ async function dispatch(
       emit: event => { validateAcpxRichEvent(event); emit("runtime.rich_event", { ...event }, currentTurnId); },
       unavailable: () => diagnostic(`${openParams!.agent}_evidence_unavailable`, "ACP tool evidence is incomplete; permission and terminal outcomes are unchanged."),
     });
+    activeCopilotEvidence = toolEvidence && "captureSemanticReceipt" in toolEvidence ? toolEvidence as CopilotToolEvidence : undefined;
     let usageBefore: unknown;
     try {
       usageBefore = await readSidecarHostStatusWithin(activeHost);
@@ -518,19 +520,22 @@ async function dispatch(
   }
   if (request.command === "session.snapshot") {
     const activeHost = requireHost();
+    const status = sanitizeRuntimeStatus(await readSidecarHostStatusWithin(activeHost));
     return {
       identity: acpxProviderSessionIdentity(
         activeHost.identity(),
         activeHost.binding(),
       ),
-      status: sanitizeRuntimeStatus(
-        await readSidecarHostStatusWithin(activeHost),
-      ),
+      status,
       runId,
       turnId,
       sequence,
       pendingToolCount: tools.size,
       pendingInputCount: inputs.size,
+      pendingRuntimeRequests: [
+        ...Array.from(inputs, ([requestId, pending]) => ({ requestId, type: "input", turnId: pending.turnId })),
+        ...Array.from(permissions, ([requestId, pending]) => ({ requestId, type: "permission", turnId: pending.turnId })),
+      ],
     };
   }
   if (request.command === "session.goal.get") {
@@ -730,6 +735,7 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
     // This is the same roundtrip used by ordinary dynamic tools; emitting a
     // local semantic_result here would let an invalid review handoff appear
     // accepted before the server has checked it.
+    const commitNormalizedInput = call.captureNormalizedInput?.(validation.result);
     const forwarded = emit(
       "runtime.tool_called",
       {
@@ -754,6 +760,7 @@ async function waitForTool(call: RunnerToolCall): Promise<unknown> {
           // A pipe write alone does not prove receiver admission. Only this
           // call's turn-bound tool.resolve success confirms runnerd accepted
           // the validated body; rejection, cancellation and timeout stay null.
+          commitNormalizedInput?.();
           settle(result);
         },
         reject,
@@ -1206,7 +1213,7 @@ function parseOpenParams(
   if (Object.keys(value).some(key => !fields.has(key))) throw new Error("ACPX open parameters include an unsupported field");
   const agent = requireQualifiedAgent(value.agent);
   const model = requiredText(value.model, "model");
-  if (value.cursorMode !== undefined && agent !== "cursor") throw new Error("cursorMode is supported only for Cursor");
+  if (value.mode !== undefined && agent !== "cursor") throw new Error("mode is supported only for Cursor");
   const piThinkingLevel = resolvePiThinkingLevel(agent, value.piThinkingLevel);
   resolveQualifiedAcpxProfile(agent, model);
   if (
@@ -1326,7 +1333,7 @@ function requiredFenceCandidates(
 
 function requiredCursorMode(value: unknown): "agent" | "plan" | "ask" {
   if (value === "agent" || value === "plan" || value === "ask") return value;
-  throw new Error("cursorMode must be agent, plan, or ask");
+  throw new Error("mode must be agent, plan, or ask");
 }
 
 function requiredPermissionMode(

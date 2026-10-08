@@ -690,6 +690,9 @@ function parsePrpEvent(
   const eventType = text(event.eventType);
   const payload = record(event.payload);
   if (isRunLogOnlyProviderEvent(eventType, payload)) return [];
+  const failure = piRuntimeFailureKey(event, payload);
+  if (failure !== null && failure === state.previousPiRuntimeFailure) return [];
+  state.previousPiRuntimeFailure = failure;
   const family = eventType.startsWith("plan.") ? "plan"
     : eventType.startsWith("tool.execution.") ? "tool_execution"
       : eventType.startsWith("research.") ? "research"

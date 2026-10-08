@@ -1,6 +1,6 @@
 import { assertRemoteNativeEvidencePrerequisites } from "./prerequisites.js";
 import { describe, expect, it } from "vitest";
-import { runnerMatrix, runnerSuites, extendedHarnessProfiles, extendedHarnessFileTask } from "./catalog.js";
+import { runnerMatrix, runnerSuites, extendedHarnessProfiles, extendedHarnessFileTask, daytonaWarmContinuityTask } from "./catalog.js";
 import { buildRunnerE2EProcessEnvironment, buildPaperclipServerEnvironment } from "./harness-env.js";
 import { parseRunnerSelectors, selectRunnerExecutions } from "./selectors.js";
 import { findSecretLeak, redactText } from "./redaction.js";
@@ -19,7 +19,7 @@ describe("extended ACP harness qualification", () => {
   });
   it("uses exact discovered models, encrypted credential references and current qualification metadata", () => {
     expect(extendedHarnessProfiles.map(profile => profile.model)).toEqual([
-      "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]", "gpt-5.6-luna", "openrouter/deepseek/deepseek-v4-flash-0731",
+      "gpt-5.6-luna[context=272k,reasoning=medium,fast=false]", "gpt-5.6-luna", "openrouter/anthropic/claude-sonnet-4.6",
     ]);
     for (const profile of extendedHarnessProfiles) {
       expect(profile.modelQualification.source).toBe(profile.qualificationCandidate === "cursor" ? "qualified_runner_profile" : "candidate_runner_profile");
@@ -49,11 +49,29 @@ describe("extended ACP harness qualification", () => {
       const config = cell.profile.buildAgent({ executionId: "warm", environmentId: "env", environmentFixtureId: cell.environment.id, workspacePath: "/tmp/workspace", secretRefs: { [cell.profile.credential]: { type: "secret_ref", secretId: "11111111-1111-4111-8111-111111111111", version: "latest" } } }).adapterConfig;
       expect(config).toMatchObject({ lifecycleMode: "warm", idleTimeoutMs: 300_000, timeoutSec: 120 });
       const admission = buildRunnerE2EProcessEnvironment({}, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION;
-      if (cell.profile.qualificationCandidate === "pi") expect(admission).toBeUndefined();
+      if (cell.profile.qualificationCandidate !== "copilot") expect(admission).toBeUndefined();
       else expect(JSON.parse(admission!)).toEqual([{ agent: cell.profile.qualificationCandidate, model: cell.profile.model }]);
       expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, suite: { ...cell.suite, manualOnly: false } }])).toThrow("explicit");
     }
     expect(selectRunnerExecutions(parseRunnerSelectors(["--all"])).some(cell => cell.suite.id === "rich-acp-warm-continuity")).toBe(false);
+  });
+  it("separates ACP process continuity from managed-home checkpoint writes", () => {
+    for (const cell of runnerMatrix.filter(cell => cell.suite.id === "rich-acp-warm-continuity")) {
+      const prompts = [cell.task.buildPrompt("nonce"), ...cell.task.buildFollowupMessages!("nonce")];
+      expect(prompts).toHaveLength(3);
+      for (const [index, prompt] of prompts.entries()) {
+        expect(prompt).toContain(`warm Daytona continuity turn ${index + 1} of 3`);
+        expect(prompt).toContain("daytona-warm-nonce.txt");
+        expect(prompt).not.toContain("AGENT_HOME");
+        expect(prompt).not.toContain("notes/");
+      }
+      expect(cell.task).toMatchObject({ turnTimeoutMs: 120_000, attemptTimeoutMs: { local: 420_000, daytona: 420_000 } });
+    }
+    const managed = [daytonaWarmContinuityTask.buildPrompt("nonce"), ...daytonaWarmContinuityTask.buildFollowupMessages!("nonce")];
+    expect(managed.every(prompt => prompt.includes("AGENT_HOME") && prompt.includes("notes/warm-memory.txt"))).toBe(true);
+    expect(managed[0]).toContain("8388608 bytes");
+    expect(managed[1]).toContain("Delete notes/delete-me.txt");
+    expect(managed[2]).toContain("Verify notes/delete-me.txt is absent");
   });
   it("admits native qualification only for its matching provider and explicit suite", () => {
     for (const suiteId of ["cursor-native", "pi-native", "copilot-protection"]) {
@@ -61,7 +79,7 @@ describe("extended ACP harness qualification", () => {
       expect(new Set(cells.map(cell => cell.environment.id))).toEqual(new Set(["local", "daytona"]));
       for (const cell of cells) {
         const admission = buildRunnerE2EProcessEnvironment({}, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION;
-        if (cell.profile.qualificationCandidate === "pi") expect(admission).toBeUndefined();
+        if (cell.profile.qualificationCandidate !== "copilot") expect(admission).toBeUndefined();
         else expect(admission).toBeDefined();
         expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, profile: { ...cell.profile, qualificationCandidate: cell.profile.qualificationCandidate === "pi" ? "cursor" : "pi" } }])).toThrow("explicit");
       }
@@ -75,8 +93,9 @@ describe("extended ACP harness qualification", () => {
     );
     for (const cell of cells) {
       expect(cell.suite.manualOnly).toBe(true);
-      expect(JSON.parse(buildRunnerE2EProcessEnvironment({ PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" }, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION!))
-        .toEqual([{ agent: cell.profile.qualificationCandidate, model: cell.profile.model }]);
+      const admission = buildRunnerE2EProcessEnvironment({ PAPERCLIP_RUNNER_ACPX_QUALIFICATION: "ambient" }, [cell]).PAPERCLIP_RUNNER_ACPX_QUALIFICATION;
+      if (cell.profile.qualificationCandidate === "copilot") expect(JSON.parse(admission!)).toEqual([{ agent: "copilot", model: cell.profile.model }]);
+      else expect(admission).toBeUndefined();
       expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, suite: { ...cell.suite, manualOnly: false } }])).toThrow("explicit");
       expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, profile: { ...cell.profile, qualificationCandidate: "pi" } }])).toThrow("explicit");
       expect(() => buildRunnerE2EProcessEnvironment({}, [{ ...cell, suite: { ...cell.suite, id: "unrelated-manual-suite" } }])).toThrow("explicit");

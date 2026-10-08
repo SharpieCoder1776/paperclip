@@ -46,6 +46,7 @@ fn config(mode: &str) -> AcpxProviderSessionConfig {
         working_directory: std::env::temp_dir(),
         permission_mode: AcpxPermissionMode::ApproveReads,
         mode: None,
+        pi_thinking_level: None,
         permission_mode_pinned: true,
         provider_policy: None,
         system_instructions: "Complete the supplied task.".to_owned(),
@@ -68,6 +69,7 @@ fn expected_identity() -> AcpxProviderSessionIdentity {
         effective_model: "gpt-5.6-sol".to_owned(),
         permission_mode: Some(AcpxPermissionMode::ApproveReads),
         mode: None,
+        pi_thinking_level: None,
         provider_lifetime_fence_candidates: [60_001, 60_002, 60_003],
     }
 }
@@ -162,6 +164,11 @@ fn bootstraps_unlisted_models_confirmed_by_the_sidecar_for_every_agent() {
         let mut selected = config("bootstrap");
         selected.agent = agent.to_owned();
         selected.model = "custom/model[context=272k,reasoning=medium]".to_owned();
+        selected.pi_thinking_level = if agent == "pi" {
+            Some(paperclip_runner_core::acpx_provider_session::PiThinkingLevel::Low)
+        } else {
+            None
+        };
         selected.provider_policy = Some(AcpxProviderRuntimePolicy { read_only: false });
         let mut session = AcpxProviderSession::start(&selected).unwrap();
         assert_eq!(session.identity().requested_model, selected.model);
@@ -265,15 +272,26 @@ fn check_tool_receiver_admission(oversized: bool) {
         assert!(session.state().pending_tool("call-admission").is_some());
         session.deliver_tool_result(&result).unwrap();
         assert!(!session.state().has_pending_tools());
-        // An exact durable delivery replay is acknowledged without a second
-        // sidecar resolution. The command journal below proves that boundary.
-        session.deliver_tool_result(&result).unwrap();
-        let mut changed = result.clone();
-        changed.result = json!({"id":"different-issue"});
-        assert!(session.deliver_tool_result(&changed).is_err());
-        changed = result.clone();
-        changed.operation_id = "issues.update".to_owned();
-        assert!(session.deliver_tool_result(&changed).is_err());
+        session
+            .deliver_tool_result(&result)
+            .expect("an identical receipt retry must be idempotent");
+        let mut changed_payload = result.clone();
+        changed_payload.result = json!({"id":"another-issue"});
+        let mut changed_operation = result.clone();
+        changed_operation.operation_id = "issues.write".to_owned();
+        let mut changed_error = result.clone();
+        changed_error.is_error = true;
+        for conflicting in [changed_payload, changed_operation, changed_error] {
+            let error = session
+                .deliver_tool_result(&conflicting)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("conflicting duplicate tool result"),
+                "{error}"
+            );
+        }
+        assert!(!session.state().has_pending_tools());
     }
     session.shutdown("admission test complete").unwrap();
     let rows: Vec<serde_json::Value> = std::fs::read_to_string(&journal)
