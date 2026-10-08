@@ -1559,3 +1559,22 @@ Affected definitions advance to native version 8, API/Bedrock version 4 and
 extended version 5. Production runtime, dependency locks and execution controls
 do not change for this oracle repair. Fresh committed-source browser acceptance
 and current-head cloud checks remain required. Hermes is still pending.
+
+The separate `2400ecdb8d` committed-source local Stop campaign passes all 28
+matchers and cleanup in 58.852 seconds, with one attempt and no automatic retry.
+The browser Stop closes the exact native callback and turn, a late answer gets
+HTTP 409, and reload preserves the unfinished task and expired zero-answer card.
+All nine observed owned process identities retire through cleanup. Complete
+selected-account OpenRouter billing settles at $0.000806592 for 31,687 input
+tokens and 291 output tokens; public $1 company and agent budgets remain healthy.
+The final screenshot was inspected, and packaged evidence has no leaks or
+missing entries. Earlier failed grades and unknown-cost holds remain unchanged.
+This qualifies only local native question Stop on the recorded source and model.
+
+Cloud run `37825846189` also passes nine native fixtures and 38 pinned Python
+checks on each Mac arm64 and Linux amd64 target at `a14a752ec8`. Its archives are
+verified against the recorded source tree and binary checksums; the Mac signature
+passes strict verification. The production runtime is byte-identical in the
+passing `2400ecdb8d` browser source. Repository CI at the latest head and the
+remaining subscription, account/protocol, attachment, state, control, routine,
+published-consumer and actual Daytona gates still prevent release qualification.
