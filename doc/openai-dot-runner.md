@@ -387,3 +387,9 @@ A plugin upgraded during a running Dot conversation can retain an old top-level
 tool catalog. Refresh its tools in ChatGPT plugin settings and reattach it.
 Inspect the real exposed actions before claiming new idle or lease actions
 are available. The assignment catalog is read on each new assignment.
+
+## Cloud direction and external-agent invitation UX
+
+The [2026-10-08 cloud Runner and invitation decision](plans/2026-10-08-cloud-dot-runner-and-external-invitations.md) keeps remote agents on the new Runner infrastructure. In addition to shared assignment lifecycle handling, this preserves a sandbox boundary for future tools that may access Paperclip workspaces. The first cloud version gives Dot no Paperclip workspace file or command tools; Dot works on its own computer.
+
+The proposed entry is **Invite an external agent → Dot / Hermes / Other**. Dot receives a copyable setup prompt and watched connection checks, with readiness requiring a confirmed event round trip. The Storybook journeys demonstrate this flow with fixtures; they do not change the current self-hosted setup or establish cloud support. Hermes continues to use the existing external-agent invitation prompt.

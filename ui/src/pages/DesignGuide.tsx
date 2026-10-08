@@ -2305,6 +2305,8 @@ export function DesignGuide() {
       <Section title="Browser setup prompt">
         <p className="text-sm text-muted-foreground">Use AgentSetupPrompt for prompts handed to an external agent: connections, webhook setup, onboarding, and task handoffs. One click copies the complete prompt, opens its preview, and confirms success inline; clipboard failures offer selectable text.</p>
         <SetupPrompt prompt="Design guide example. This is a preview, not a real provider setup request." />
+        <p className="text-sm text-muted-foreground">For a named recipient, pass the optional agent name and logo. The same copy feedback, preview, and manual clipboard recovery apply.</p>
+        <SetupPrompt prompt="Design guide example for Dot. No live pairing code." label="Copy setup prompt" title="Connect your Dot" agent={{ name: "Dot", src: "/brands/adapters/openai-dot.svg" }} />
       </Section>
 
       <Section title="Connection Intent">
